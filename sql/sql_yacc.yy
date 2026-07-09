@@ -1365,7 +1365,7 @@ void warn_on_deprecated_user_defined_collation(
 %token<lexer.keyword> REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYM 996 /* MYSQL */
 %token<lexer.keyword> STREAM_SYM 997                    /* MYSQL */
 %token<lexer.keyword> OFF_SYM 998                       /* SQL-1999-R */
-%token<lexer.keyword> RETURNING_SYM 999                 /* SQL-2016-N */
+%token  RETURNING_SYM 999                               /* SQL-2016-N */
 /*
   Here is an intentional gap in token numbers.
 
@@ -15783,7 +15783,6 @@ ident_keywords_unambiguous:
         | RESUME_SYM
         | RETAIN_SYM
         | RETURNED_SQLSTATE_SYM
-        | RETURNING_SYM
         | RETURNS_SYM
         | REUSE_SYM
         | REVERSE_SYM
