@@ -1158,6 +1158,12 @@ bool Sql_cmd_insert_base::prepare_inner(THD *thd) {
   if (duplicates == DUP_REPLACE) lex->insert_table_leaf->set_deleted();
   if (duplicates == DUP_UPDATE) lex->insert_table_leaf->set_updated();
 
+  // Resolve the RETURNING clause against the (now set-up) target table. The
+  // name-resolution context is currently isolated to the insert table, so the
+  // list resolves against the affected row's columns.
+  if (has_returning() && setup_returning_fields(thd, select, m_returning_fields))
+    return true;
+
   TABLE *const insert_table = lex->insert_table_leaf->table;
 
   uint field_count = insert_field_list.size();
