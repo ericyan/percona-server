@@ -1,0 +1,52 @@
+# INSERT/REPLACE ... VALUES ... RETURNING
+CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT, a INT, b VARCHAR(10) DEFAULT 'x');
+# explicit column list
+INSERT INTO t1 (a) VALUES (10) RETURNING id, a, b;
+id	a	b
+1	10	x
+# RETURNING *
+INSERT INTO t1 (a) VALUES (20) RETURNING *;
+id	a	b
+2	20	x
+# expression + alias
+INSERT INTO t1 (a) VALUES (30) RETURNING id, a + 1 AS a_plus;
+id	a_plus
+3	31
+# qualified wildcard
+INSERT INTO t1 (a) VALUES (40) RETURNING t1.*;
+id	a	b
+4	40	x
+# multi-row VALUES: one result row per inserted row
+INSERT INTO t1 (a) VALUES (50), (60), (70) RETURNING id, a;
+id	a
+5	50
+6	60
+7	70
+# REPLACE ... RETURNING
+REPLACE INTO t1 (id, a) VALUES (1, 999) RETURNING id, a;
+id	a
+1	999
+# error: unknown column in RETURNING (resolved at prepare)
+INSERT INTO t1 (a) VALUES (80) RETURNING nosuchcol;
+ERROR 42S22: Unknown column 'nosuchcol' in 'field list'
+# RETURNING not allowed in a stored function
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+INSERT INTO t1 (a) VALUES (1) RETURNING id;
+RETURN 0;
+END|
+ERROR 0A000: Not allowed to return a result set from a function
+# RETURNING not allowed in a trigger
+CREATE TRIGGER tr1 AFTER INSERT ON t1 FOR EACH ROW
+INSERT INTO t1 (a) VALUES (1) RETURNING id|
+ERROR 0A000: Not allowed to return a result set from a trigger
+# RETURNING allowed inside a stored procedure (returns a result set)
+CREATE PROCEDURE p1()
+BEGIN
+INSERT INTO t1 (a) VALUES (100) RETURNING id, a;
+END|
+CALL p1();
+id	a
+8	100
+DROP PROCEDURE p1;
+DROP TABLE t1;

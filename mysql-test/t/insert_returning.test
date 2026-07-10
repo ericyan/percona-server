@@ -1,0 +1,48 @@
+--echo # INSERT/REPLACE ... VALUES ... RETURNING
+CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT, a INT, b VARCHAR(10) DEFAULT 'x');
+
+--echo # explicit column list
+INSERT INTO t1 (a) VALUES (10) RETURNING id, a, b;
+--echo # RETURNING *
+INSERT INTO t1 (a) VALUES (20) RETURNING *;
+--echo # expression + alias
+INSERT INTO t1 (a) VALUES (30) RETURNING id, a + 1 AS a_plus;
+--echo # qualified wildcard
+INSERT INTO t1 (a) VALUES (40) RETURNING t1.*;
+--echo # multi-row VALUES: one result row per inserted row
+INSERT INTO t1 (a) VALUES (50), (60), (70) RETURNING id, a;
+--echo # REPLACE ... RETURNING
+REPLACE INTO t1 (id, a) VALUES (1, 999) RETURNING id, a;
+
+--echo # error: unknown column in RETURNING (resolved at prepare)
+--error ER_BAD_FIELD_ERROR
+INSERT INTO t1 (a) VALUES (80) RETURNING nosuchcol;
+
+--echo # RETURNING not allowed in a stored function
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  INSERT INTO t1 (a) VALUES (1) RETURNING id;
+  RETURN 0;
+END|
+delimiter ;|
+
+--echo # RETURNING not allowed in a trigger
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE TRIGGER tr1 AFTER INSERT ON t1 FOR EACH ROW
+  INSERT INTO t1 (a) VALUES (1) RETURNING id|
+delimiter ;|
+
+--echo # RETURNING allowed inside a stored procedure (returns a result set)
+delimiter |;
+CREATE PROCEDURE p1()
+BEGIN
+  INSERT INTO t1 (a) VALUES (100) RETURNING id, a;
+END|
+delimiter ;|
+CALL p1();
+DROP PROCEDURE p1;
+
+DROP TABLE t1;

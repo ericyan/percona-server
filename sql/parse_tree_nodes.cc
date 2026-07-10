@@ -1214,9 +1214,17 @@ Sql_cmd *PT_insert::make_cmd(THD *thd) {
     // which would clobber the INSERT's field list. The RETURNING list is
     // resolved separately against the target table in
     // Sql_cmd_insert_base::prepare_inner() (a later commit).
+    // '*' / 'tbl.*' (Item_asterisk) is only valid in a select-list context, so
+    // itemize the RETURNING expressions with parsing_place set accordingly.
+    const enum_parsing_context save_parsing_place = pc.select->parsing_place;
+    pc.select->parsing_place = CTX_SELECT_LIST;
     for (Item *&item : opt_returning_clause->value) {
-      if (item->itemize(&pc, &item)) return nullptr;
+      if (item->itemize(&pc, &item)) {
+        pc.select->parsing_place = save_parsing_place;
+        return nullptr;
+      }
     }
+    pc.select->parsing_place = save_parsing_place;
     sql_cmd->set_returning_fields(&opt_returning_clause->value);
   }
 
