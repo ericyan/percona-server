@@ -121,3 +121,18 @@ EXECUTE s3 USING @v1, @v2;
 DEALLOCATE PREPARE s3;
 SELECT * FROM tp ORDER BY id;
 DROP TABLE tp;
+
+--echo # subqueries inside the RETURNING list
+CREATE TABLE lookup (k INT, v VARCHAR(10));
+INSERT INTO lookup VALUES (1, 'one'), (2, 'two'), (3, 'three');
+CREATE TABLE ts (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+--echo # non-correlated scalar subquery
+INSERT INTO ts (a) VALUES (1)
+  RETURNING id, a, (SELECT COUNT(*) FROM lookup) AS lookup_count;
+--echo # correlated scalar subquery referencing the inserted row's column a
+INSERT INTO ts (a) VALUES (2)
+  RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
+--echo # correlated subquery for a non-matching value returns NULL
+INSERT INTO ts (a) VALUES (99)
+  RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
+DROP TABLE ts, lookup;
