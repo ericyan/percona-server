@@ -57,3 +57,20 @@ INSERT INTO t2 (x) SELECT x + 10 FROM src ORDER BY x RETURNING *;
 --echo # REPLACE ... SELECT ... RETURNING
 REPLACE INTO t2 (id, x) SELECT 1, 999 RETURNING id, x;
 DROP TABLE src, t2;
+
+--echo # RETURNING with generated columns (STORED and VIRTUAL)
+CREATE TABLE gc (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  a INT,
+  b INT AS (a + 1) VIRTUAL,
+  c INT AS (a * 2) STORED
+);
+--echo # explicit generated columns
+INSERT INTO gc (a) VALUES (10) RETURNING id, a, b, c;
+--echo # RETURNING * includes generated columns
+INSERT INTO gc (a) VALUES (20) RETURNING *;
+--echo # expression over a generated column
+INSERT INTO gc (a) VALUES (30) RETURNING id, b + c AS sum_bc;
+--echo # multi-row with generated columns
+INSERT INTO gc (a) VALUES (40), (50) RETURNING a, b, c;
+DROP TABLE gc;
