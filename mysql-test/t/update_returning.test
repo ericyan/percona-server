@@ -20,3 +20,50 @@ UPDATE t1 SET a = a + 1
   WHERE id IN (SELECT id FROM t2 WHERE a > 150) RETURNING id, a;
 
 DROP TABLE t1, t2;
+
+--echo #
+--echo # UPDATE ... RETURNING: streaming of the result set
+--echo #
+--echo # NOTE: the RETURNING result set is produced in update (scan) order.
+--echo # --sorted_result is used below to make the expected output stable
+--echo # regardless of that order.
+
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # basic single-table UPDATE with explicit columns: post-update values
+--echo # are returned, one row per matched row
+--sorted_result
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING id, a;
+SELECT * FROM t1 ORDER BY id;
+
+--echo # RETURNING * (all columns, post-update image)
+--sorted_result
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING *;
+SELECT * FROM t1 ORDER BY id;
+
+--echo # expression + alias
+--sorted_result
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING id, a * 2 AS dbl;
+SELECT * FROM t1 ORDER BY id;
+
+--echo # qualified wildcard
+--sorted_result
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING t1.*;
+SELECT * FROM t1 ORDER BY id;
+
+--echo # ORDER BY ... LIMIT (applies to the UPDATE) with RETURNING: only the
+--echo # updated rows are returned
+--sorted_result
+UPDATE t1 SET a = a + 1 ORDER BY id LIMIT 2 RETURNING id, a;
+SELECT * FROM t1 ORDER BY id;
+
+--echo # no-match update: empty result set (column header, zero rows)
+UPDATE t1 SET a = a + 1 WHERE id = 1000 RETURNING a;
+
+--echo # no-op update (new value equals old value): matched rows are still
+--echo # returned
+--sorted_result
+UPDATE t1 SET a = a WHERE id IN (1, 2) RETURNING id, a;
+
+DROP TABLE t1;
