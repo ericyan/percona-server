@@ -1572,7 +1572,24 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
     multitable = true;
   }
 
-  if (!multitable && select->first_inner_query_expression() != nullptr &&
+  // RETURNING is only supported for single-table UPDATE, and is streamed by
+  // the traditional single-table executor (update_single_table()). At this
+  // point `multitable` reflects genuine multi-table UPDATE: either multiple
+  // target tables, or a multi-table updatable view (the hypergraph optimizer
+  // is forced off for RETURNING, so it does not inflate this flag). Reject
+  // such statements with a clear error.
+  if (has_returning() && multitable) {
+    my_error(ER_RETURNING_NOT_SUPPORTED_FOR_MULTI_TABLE, MYF(0), "UPDATE");
+    return true;
+  }
+
+  // Keep single-table UPDATE ... RETURNING on the single-table executor even
+  // when a subquery would otherwise trigger a switch to the multi-table
+  // iterator path, which does not stream a RETURNING result set. Correctness
+  // is preserved (the single-table path evaluates the subquery); only the
+  // subquery-materialization/semijoin optimization is given up here.
+  if (!multitable && !has_returning() &&
+      select->first_inner_query_expression() != nullptr &&
       should_switch_to_multi_table_if_subqueries(thd, select, table_list))
     multitable = true;
 
@@ -1648,6 +1665,13 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
     return true; /* purecov: inspected */
 
   thd->mark_used_columns = mark_used_columns_saved;
+
+  // Resolve the RETURNING clause against the (single) target table now that
+  // its columns are set up. Multi-table UPDATE was rejected above, so the
+  // name-resolution context resolves to the target table only.
+  if (has_returning() &&
+      setup_returning_fields(thd, select, m_returning_fields))
+    return true;
 
   if (select->resolve_limits(thd)) return true;
 

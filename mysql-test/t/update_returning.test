@@ -1,0 +1,22 @@
+--echo # UPDATE ... RETURNING: resolution and restrictions
+--echo # (execution of the result set is covered in a later commit)
+
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y');
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+
+--echo # error: unknown column in RETURNING (resolved at prepare)
+--error ER_BAD_FIELD_ERROR
+UPDATE t1 SET a = a + 1 RETURNING nosuchcol;
+
+--echo # error: RETURNING not supported for multi-table UPDATE
+--error ER_RETURNING_NOT_SUPPORTED_FOR_MULTI_TABLE
+UPDATE t1, t2 SET t1.a = t2.a WHERE t1.id = t2.id RETURNING t1.a;
+
+--echo # single-table UPDATE ... RETURNING with a subquery in WHERE is allowed
+--echo # (must stay on the single-table executor, not rejected as multi-table)
+UPDATE t1 SET a = a + 1
+  WHERE id IN (SELECT id FROM t2 WHERE a > 150) RETURNING id, a;
+
+DROP TABLE t1, t2;
