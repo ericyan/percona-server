@@ -100,3 +100,39 @@ DELETE FROM t1 RETURNING id, a;
 SELECT * FROM t1;
 
 DROP TABLE t1;
+
+--echo #
+--echo # DELETE ... RETURNING in stored programs
+--echo #
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+CREATE TABLE t2 (id INT PRIMARY KEY);
+
+--echo # rejected in a stored function (returns a result set)
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  DELETE FROM t1 RETURNING id;
+  RETURN 0;
+END|
+delimiter ;|
+
+--echo # rejected in a trigger
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE TRIGGER tr1 AFTER INSERT ON t2 FOR EACH ROW
+  DELETE FROM t1 RETURNING id|
+delimiter ;|
+
+--echo # allowed inside a stored procedure (returns a result set)
+INSERT INTO t1 VALUES (1, 10), (2, 20);
+delimiter |;
+CREATE PROCEDURE p1()
+BEGIN
+  DELETE FROM t1 WHERE id = 1 RETURNING id, a;
+END|
+delimiter ;|
+CALL p1();
+DROP PROCEDURE p1;
+
+DROP TABLE t1, t2;

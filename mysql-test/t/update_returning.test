@@ -67,3 +67,38 @@ UPDATE t1 SET a = a + 1 WHERE id = 1000 RETURNING a;
 UPDATE t1 SET a = a WHERE id IN (1, 2) RETURNING id, a;
 
 DROP TABLE t1;
+
+--echo #
+--echo # UPDATE ... RETURNING in stored programs
+--echo #
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+INSERT INTO t1 VALUES (1, 10), (2, 20);
+
+--echo # rejected in a stored function (returns a result set)
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  UPDATE t1 SET a = a + 1 RETURNING id;
+  RETURN 0;
+END|
+delimiter ;|
+
+--echo # rejected in a trigger
+delimiter |;
+--error ER_SP_NO_RETSET
+CREATE TRIGGER tr1 AFTER INSERT ON t1 FOR EACH ROW
+  UPDATE t1 SET a = a + 1 RETURNING id|
+delimiter ;|
+
+--echo # allowed inside a stored procedure (returns a result set)
+delimiter |;
+CREATE PROCEDURE p1()
+BEGIN
+  UPDATE t1 SET a = a + 1 WHERE id = 1 RETURNING id, a;
+END|
+delimiter ;|
+CALL p1();
+DROP PROCEDURE p1;
+
+DROP TABLE t1;

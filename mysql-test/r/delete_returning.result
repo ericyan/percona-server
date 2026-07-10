@@ -111,3 +111,30 @@ id	a
 SELECT * FROM t1;
 id	a	b
 DROP TABLE t1;
+#
+# DELETE ... RETURNING in stored programs
+#
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+CREATE TABLE t2 (id INT PRIMARY KEY);
+# rejected in a stored function (returns a result set)
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+DELETE FROM t1 RETURNING id;
+RETURN 0;
+END|
+ERROR 0A000: Not allowed to return a result set from a function
+# rejected in a trigger
+CREATE TRIGGER tr1 AFTER INSERT ON t2 FOR EACH ROW
+DELETE FROM t1 RETURNING id|
+ERROR 0A000: Not allowed to return a result set from a trigger
+# allowed inside a stored procedure (returns a result set)
+INSERT INTO t1 VALUES (1, 10), (2, 20);
+CREATE PROCEDURE p1()
+BEGIN
+DELETE FROM t1 WHERE id = 1 RETURNING id, a;
+END|
+CALL p1();
+id	a
+1	10
+DROP PROCEDURE p1;
+DROP TABLE t1, t2;
