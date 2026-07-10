@@ -661,6 +661,9 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
         // continue when IGNORE clause is used.
         continue;
       }
+      const ha_rows returning_copied = info.stats.copied;
+      const ha_rows returning_deleted = info.stats.deleted;
+      const ha_rows returning_updated = info.stats.updated;
       int error = insert_table->file->ha_upsert(thd, update_field_list,
                                                 update_value_list);
       if (error == ENOTSUP)
@@ -669,7 +672,11 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
         has_error = true;
         break;
       }
-      if (has_returning() &&
+      const bool returning_row_produced =
+          info.stats.copied != returning_copied ||
+          info.stats.deleted != returning_deleted ||
+          info.stats.updated != returning_updated;
+      if (returning_row_produced && has_returning() &&
           returning_sender.send_row(thd, *m_returning_fields)) {
         has_error = true;
         break;
@@ -2379,11 +2386,18 @@ bool Query_result_insert::send_data(THD *thd,
     return thd->is_error();
   }
 
+  const ha_rows returning_copied = info.stats.copied;
+  const ha_rows returning_deleted = info.stats.deleted;
+  const ha_rows returning_updated = info.stats.updated;
   error = write_record(thd, table, &info, &update);
 
   DEBUG_SYNC(thd, "create_select_after_write_rows_event");
 
-  if (!error && has_returning() &&
+  const bool returning_row_produced =
+      info.stats.copied != returning_copied ||
+      info.stats.deleted != returning_deleted ||
+      info.stats.updated != returning_updated;
+  if (!error && returning_row_produced && has_returning() &&
       m_returning_sender.send_row(thd, *m_returning_fields))
     error = true;
 

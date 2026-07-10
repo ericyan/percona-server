@@ -95,3 +95,24 @@ a	b	c
 40	41	80
 50	51	100
 DROP TABLE gc;
+# INSERT IGNORE: skipped (duplicate) rows are not returned
+CREATE TABLE ti (id INT PRIMARY KEY, a INT);
+INSERT INTO ti VALUES (1, 100);
+# id=1 is a duplicate and skipped; only id=2 is inserted and returned
+INSERT IGNORE INTO ti VALUES (1, 999), (2, 200) RETURNING id, a;
+id	a
+2	200
+Warnings:
+Warning	1062	Duplicate entry '1' for key 'ti.PRIMARY'
+# INSERT IGNORE ... SELECT: duplicate id=1 skipped, id=3 returned
+INSERT IGNORE INTO ti SELECT 1, 111 UNION SELECT 3, 300 RETURNING id, a;
+id	a
+3	300
+Warnings:
+Warning	1062	Duplicate entry '1' for key 'ti.PRIMARY'
+SELECT * FROM ti ORDER BY id;
+id	a
+1	100
+2	200
+3	300
+DROP TABLE ti;

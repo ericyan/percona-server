@@ -74,3 +74,13 @@ INSERT INTO gc (a) VALUES (30) RETURNING id, b + c AS sum_bc;
 --echo # multi-row with generated columns
 INSERT INTO gc (a) VALUES (40), (50) RETURNING a, b, c;
 DROP TABLE gc;
+
+--echo # INSERT IGNORE: skipped (duplicate) rows are not returned
+CREATE TABLE ti (id INT PRIMARY KEY, a INT);
+INSERT INTO ti VALUES (1, 100);
+--echo # id=1 is a duplicate and skipped; only id=2 is inserted and returned
+INSERT IGNORE INTO ti VALUES (1, 999), (2, 200) RETURNING id, a;
+--echo # INSERT IGNORE ... SELECT: duplicate id=1 skipped, id=3 returned
+INSERT IGNORE INTO ti SELECT 1, 111 UNION SELECT 3, 300 RETURNING id, a;
+SELECT * FROM ti ORDER BY id;
+DROP TABLE ti;
