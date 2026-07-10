@@ -138,3 +138,44 @@ id	a
 1	10
 DROP PROCEDURE p1;
 DROP TABLE t1, t2;
+#
+# DELETE ... RETURNING: PREPARE/EXECUTE
+#
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+PREPARE st FROM 'DELETE FROM t1 WHERE id = ? RETURNING id, a';
+SET @id = 1;
+EXECUTE st USING @id;
+id	a
+1	10
+SET @id = 2;
+EXECUTE st USING @id;
+id	a
+2	20
+# RETURNING * through a prepared statement
+PREPARE st2 FROM 'DELETE FROM t1 WHERE id = ? RETURNING *';
+SET @id = 3;
+EXECUTE st2 USING @id;
+id	a
+3	30
+DROP PREPARE st;
+DROP PREPARE st2;
+SELECT * FROM t1 ORDER BY id;
+id	a
+DROP TABLE t1;
+#
+# DELETE ... RETURNING: subqueries in the RETURNING list
+#
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+INSERT INTO t1 VALUES (1, 10), (2, 20);
+CREATE TABLE t2 (id INT PRIMARY KEY, tag VARCHAR(10));
+INSERT INTO t2 VALUES (1, 'one'), (2, 'two');
+# non-correlated scalar subquery
+DELETE FROM t1 WHERE id = 1 RETURNING id, a, (SELECT COUNT(*) FROM t2) AS t2cnt;
+id	a	t2cnt
+1	10	2
+# correlated scalar subquery referencing the deleted row
+DELETE FROM t1 RETURNING id, (SELECT tag FROM t2 WHERE t2.id = t1.id) AS tag;
+id	tag
+2	two
+DROP TABLE t1, t2;
