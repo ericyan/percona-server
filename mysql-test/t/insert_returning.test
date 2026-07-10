@@ -84,3 +84,18 @@ INSERT IGNORE INTO ti VALUES (1, 999), (2, 200) RETURNING id, a;
 INSERT IGNORE INTO ti SELECT 1, 111 UNION SELECT 3, 300 RETURNING id, a;
 SELECT * FROM ti ORDER BY id;
 DROP TABLE ti;
+
+--echo # ON DUPLICATE KEY UPDATE ... RETURNING (final row image)
+CREATE TABLE od (id INT PRIMARY KEY, a INT, cnt INT DEFAULT 0);
+INSERT INTO od (id, a) VALUES (1, 10);
+--echo # no duplicate: a new row is inserted; RETURNING shows the inserted row
+INSERT INTO od (id, a) VALUES (2, 20)
+  ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+--echo # duplicate id=1: the existing row is updated; RETURNING shows the updated row
+INSERT INTO od (id, a) VALUES (1, 999)
+  ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+--echo # RETURNING * with ON DUPLICATE KEY UPDATE
+INSERT INTO od (id, a) VALUES (1, 999)
+  ON DUPLICATE KEY UPDATE a = a + 1, cnt = cnt + 1 RETURNING *;
+SELECT * FROM od ORDER BY id;
+DROP TABLE od;

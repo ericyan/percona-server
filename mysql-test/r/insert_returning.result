@@ -116,3 +116,26 @@ id	a
 2	200
 3	300
 DROP TABLE ti;
+# ON DUPLICATE KEY UPDATE ... RETURNING (final row image)
+CREATE TABLE od (id INT PRIMARY KEY, a INT, cnt INT DEFAULT 0);
+INSERT INTO od (id, a) VALUES (1, 10);
+# no duplicate: a new row is inserted; RETURNING shows the inserted row
+INSERT INTO od (id, a) VALUES (2, 20)
+ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+id	a	cnt
+2	20	0
+# duplicate id=1: the existing row is updated; RETURNING shows the updated row
+INSERT INTO od (id, a) VALUES (1, 999)
+ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+id	a	cnt
+1	110	1
+# RETURNING * with ON DUPLICATE KEY UPDATE
+INSERT INTO od (id, a) VALUES (1, 999)
+ON DUPLICATE KEY UPDATE a = a + 1, cnt = cnt + 1 RETURNING *;
+id	a	cnt
+1	111	2
+SELECT * FROM od ORDER BY id;
+id	a	cnt
+1	111	2
+2	20	0
+DROP TABLE od;
