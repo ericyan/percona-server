@@ -975,7 +975,32 @@ Sql_cmd *PT_delete::make_cmd(THD *thd) {
 
   if (opt_hints != nullptr && opt_hints->contextualize(&pc)) return nullptr;
 
-  return new (thd->mem_root) Sql_cmd_delete(is_multitable(), &delete_tables);
+  Sql_cmd_delete *cmd =
+      new (thd->mem_root) Sql_cmd_delete(is_multitable(), &delete_tables);
+  if (cmd == nullptr) return nullptr;
+
+  if (opt_returning_clause != nullptr) {
+    // Itemize the RETURNING expressions directly. We deliberately do NOT call
+    // opt_returning_clause->contextualize(): select_item_list produces a
+    // PT_select_item_list whose do_contextualize() assigns pc->select->fields,
+    // which would clobber the DELETE's field list. The RETURNING list is
+    // resolved separately against the target table in
+    // Sql_cmd_delete::prepare_inner() (a later commit).
+    // '*' / 'tbl.*' (Item_asterisk) is only valid in a select-list context, so
+    // itemize the RETURNING expressions with parsing_place set accordingly.
+    const enum_parsing_context save_parsing_place = pc.select->parsing_place;
+    pc.select->parsing_place = CTX_SELECT_LIST;
+    for (Item *&item : opt_returning_clause->value) {
+      if (item->itemize(&pc, &item)) {
+        pc.select->parsing_place = save_parsing_place;
+        return nullptr;
+      }
+    }
+    pc.select->parsing_place = save_parsing_place;
+    cmd->set_returning_fields(&opt_returning_clause->value);
+  }
+
+  return cmd;
 }
 
 Sql_cmd *PT_update::make_cmd(THD *thd) {
