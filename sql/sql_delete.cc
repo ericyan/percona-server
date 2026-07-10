@@ -790,7 +790,13 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     multitable = true;
   }
 
-  if (!multitable && select->first_inner_query_expression() != nullptr &&
+  // A single-table DELETE ... RETURNING must stay on the single-table
+  // executor (delete_from_single_table), which streams the RETURNING result
+  // set; a subquery in WHERE must not switch it to the multi-table iterator
+  // path. Correctness is preserved (the subquery is still evaluated); only
+  // the subquery-materialization/semijoin optimization is given up.
+  if (!multitable && !has_returning() &&
+      select->first_inner_query_expression() != nullptr &&
       should_switch_to_multi_table_if_subqueries(thd, select, table_list))
     multitable = true;
 
@@ -849,6 +855,14 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
 
   thd->want_privilege = want_privilege_saved;
   thd->mark_used_columns = mark_used_columns_saved;
+
+  // Resolve the RETURNING clause against the (single) target table now that
+  // its columns are set up. Multi-table DELETE ... RETURNING is rejected by
+  // the grammar, so the name-resolution context resolves to the target table
+  // only.
+  if (has_returning() &&
+      setup_returning_fields(thd, select, m_returning_fields))
+    return true;
 
   if (select->has_ft_funcs() && setup_ftfuncs(thd, select))
     return true; /* purecov: inspected */

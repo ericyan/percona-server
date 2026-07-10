@@ -1,0 +1,16 @@
+# DELETE ... RETURNING: resolution and restrictions
+# (execution of the result set is not hooked up in this commit)
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y');
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+# error: unknown column in RETURNING (resolved at prepare)
+DELETE FROM t1 RETURNING nosuchcol;
+ERROR 42S22: Unknown column 'nosuchcol' in 'field list'
+# error: multi-table DELETE ... RETURNING is a syntax error
+DELETE t1 FROM t1, t2 WHERE t1.id = t2.id RETURNING t1.id;
+ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'RETURNING t1.id' at line 1
+# single-table DELETE ... RETURNING with a subquery in WHERE is allowed
+# (must stay on the single-table executor, not switched to multi-table)
+DELETE FROM t1 WHERE id IN (SELECT id FROM t2) RETURNING id;
+DROP TABLE t1, t2;
