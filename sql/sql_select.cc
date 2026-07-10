@@ -546,7 +546,14 @@ bool Sql_cmd_dml::prepare(THD *thd) {
   if (sql_command_code() == SQLCOM_SELECT) DEBUG_SYNC(thd, "after_table_open");
 #endif
 
+  // A RETURNING clause is only implemented in the traditional (non-hypergraph)
+  // executor: single-table UPDATE/DELETE ... RETURNING stream their result set
+  // from update_single_table()/delete_from_single_table(), and INSERT/REPLACE
+  // ... RETURNING from the corresponding legacy paths. Force the traditional
+  // optimizer whenever a RETURNING clause is present so that the statement is
+  // never routed through the hypergraph/iterator executor.
   lex->set_using_hypergraph_optimizer(
+      !has_returning() &&
       thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER));
 
   if (thd->lex->validate_use_in_old_optimizer()) {
@@ -729,7 +736,11 @@ bool Sql_cmd_dml::execute(THD *thd) {
       DEBUG_SYNC(thd, "after_table_open");
 #endif
     // Use the hypergraph optimizer for the SELECT statement, if enabled.
+    // A RETURNING clause forces the traditional optimizer (see the matching
+    // logic in prepare()), so keep this consistent to avoid a spurious
+    // reprepare loop for prepared RETURNING statements.
     const bool need_hypergraph_optimizer =
+        !has_returning() &&
         thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER);
 
     if (need_hypergraph_optimizer != lex->using_hypergraph_optimizer() &&
