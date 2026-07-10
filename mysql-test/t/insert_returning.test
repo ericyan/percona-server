@@ -136,3 +136,18 @@ INSERT INTO ts (a) VALUES (2)
 INSERT INTO ts (a) VALUES (99)
   RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
 DROP TABLE ts, lookup;
+
+--echo # ROW_COUNT() and LAST_INSERT_ID() with RETURNING
+CREATE TABLE tc (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+--echo # multi-row INSERT ... RETURNING, then capture ROW_COUNT()/LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (10), (20), (30) RETURNING id, a;
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_after_returning, @lid AS last_insert_id_after_returning;
+--echo # same insert shape WITHOUT returning, for comparison
+INSERT INTO tc (a) VALUES (40), (50), (60);
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_plain, @lid AS last_insert_id_plain;
+--echo # single-row INSERT ... RETURNING then LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (70) RETURNING id;
+SELECT LAST_INSERT_ID() AS last_insert_id_single;
+DROP TABLE tc;

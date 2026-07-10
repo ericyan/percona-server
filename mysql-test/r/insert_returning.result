@@ -195,3 +195,29 @@ RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
 id	a	a_name
 3	99	NULL
 DROP TABLE ts, lookup;
+# ROW_COUNT() and LAST_INSERT_ID() with RETURNING
+CREATE TABLE tc (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+# multi-row INSERT ... RETURNING, then capture ROW_COUNT()/LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (10), (20), (30) RETURNING id, a;
+id	a
+1	10
+2	20
+3	30
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_after_returning, @lid AS last_insert_id_after_returning;
+row_count_after_returning	last_insert_id_after_returning
+-1	1
+# same insert shape WITHOUT returning, for comparison
+INSERT INTO tc (a) VALUES (40), (50), (60);
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_plain, @lid AS last_insert_id_plain;
+row_count_plain	last_insert_id_plain
+3	4
+# single-row INSERT ... RETURNING then LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (70) RETURNING id;
+id
+7
+SELECT LAST_INSERT_ID() AS last_insert_id_single;
+last_insert_id_single
+7
+DROP TABLE tc;
