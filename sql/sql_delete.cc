@@ -646,17 +646,19 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
 
       assert(!thd->is_error());
 
-      // Stream the pre-delete row image for RETURNING: record[0] currently
-      // holds the row that qualified and is about to be deleted.
-      if (has_returning() &&
-          returning_sender.send_row(thd, *m_returning_fields)) {
+      if (DeleteCurrentRowAndProcessTriggers(thd, table, has_before_triggers,
+                                             has_after_triggers,
+                                             &deleted_rows)) {
         error = 1;
         break;
       }
 
-      if (DeleteCurrentRowAndProcessTriggers(thd, table, has_before_triggers,
-                                             has_after_triggers,
-                                             &deleted_rows)) {
+      // Stream the row for RETURNING only after the BEFORE trigger, the engine
+      // delete, and the AFTER trigger have all completed successfully, so a
+      // row is never sent to the client before it has actually been deleted.
+      // record[0] still holds the (pre-delete) row image at this point.
+      if (has_returning() &&
+          returning_sender.send_row(thd, *m_returning_fields)) {
         error = 1;
         break;
       }
