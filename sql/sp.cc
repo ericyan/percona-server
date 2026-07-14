@@ -82,6 +82,8 @@
 #include "sql/sp_head.h"      // Stored_program_creation_ctx
 #include "sql/sp_pcontext.h"  // sp_pcontext
 #include "sql/sql_class.h"
+#include "sql/sql_cmd.h"      // enum_sql_cmd_type, SQL_CMD_DML
+#include "sql/sql_cmd_dml.h"  // Sql_cmd_dml
 #include "sql/sql_const.h"
 #include "sql/sql_db.h"  // get_default_db_collation
 #include "sql/sql_digest_stream.h"
@@ -2441,6 +2443,24 @@ uint sp_get_flags_for_command(LEX *lex) {
     case SQLCOM_DROP_RESOURCE_GROUP:
     case SQLCOM_ALTER_TABLESPACE:
       flags = sp_head::HAS_COMMIT_OR_ROLLBACK;
+      break;
+    case SQLCOM_INSERT:
+    case SQLCOM_INSERT_SELECT:
+    case SQLCOM_REPLACE:
+    case SQLCOM_REPLACE_SELECT:
+      /*
+        INSERT/REPLACE ... RETURNING returns a result set to the client, so it
+        must be treated like a multi-result statement: permitted inside a
+        stored procedure, but rejected inside a stored function or trigger by
+        is_not_allowed_in_function() (ER_SP_NO_RETSET). A plain INSERT/REPLACE
+        (no RETURNING) returns no result set, so flags stay 0.
+      */
+      if (lex->m_sql_cmd != nullptr &&
+          lex->m_sql_cmd->sql_cmd_type() == SQL_CMD_DML &&
+          down_cast<const Sql_cmd_dml *>(lex->m_sql_cmd)->has_returning())
+        flags = sp_head::MULTI_RESULTS;
+      else
+        flags = lex->is_explain() ? sp_head::MULTI_RESULTS : 0;
       break;
     default:
       flags = lex->is_explain() ? sp_head::MULTI_RESULTS : 0;

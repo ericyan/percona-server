@@ -92,8 +92,9 @@
 #include "sql/sql_gipk.h"
 #include "sql/sql_lex.h"
 #include "sql/sql_list.h"
-#include "sql/sql_resolver.h"  // validate_gc_assignment
-#include "sql/sql_select.h"    // check_privileges_for_list
+#include "sql/sql_resolver.h"   // validate_gc_assignment
+#include "sql/sql_returning.h"  // Returning_sender
+#include "sql/sql_select.h"     // check_privileges_for_list
 #include "sql/sql_show.h"      // store_create_info
 #include "sql/sql_table.h"     // quick_rm_table
 #include "sql/sql_view.h"      // check_key_in_view
@@ -478,6 +479,8 @@ bool Sql_cmd_insert_base::check_privileges(THD *thd) {
 bool Sql_cmd_insert_values::execute_inner(THD *thd) {
   DBUG_TRACE;
 
+  Returning_sender returning_sender;
+
   assert(thd->lex->sql_command == SQLCOM_REPLACE ||
          thd->lex->sql_command == SQLCOM_INSERT);
 
@@ -603,6 +606,12 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
       (*next_field)->reset_warnings();
     }
 
+    if (has_returning() &&
+        returning_sender.begin(thd, *m_returning_fields)) {
+      has_error = true;
+    }
+
+    if (!has_error)
     for (const List_item *values : insert_many_values) {
       Autoinc_field_has_explicit_non_null_value_reset_guard after_each_row(
           insert_table);
@@ -657,6 +666,11 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
       if (error == ENOTSUP)
         error = write_record(thd, insert_table, &info, &update);
       if (error) {
+        has_error = true;
+        break;
+      }
+      if (has_returning() &&
+          returning_sender.send_row(thd, *m_returning_fields)) {
         has_error = true;
         break;
       }
@@ -774,7 +788,7 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
                 (thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
                      ? info.stats.touched
                      : info.stats.updated);
-    my_ok(thd, row_count, id);
+    if (!has_returning()) my_ok(thd, row_count, id);
   } else {
     char buff[160];
     const ha_rows updated =
@@ -791,8 +805,9 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
                (long)info.stats.records, (long)(info.stats.deleted + updated),
                (long)thd->get_stmt_da()->current_statement_cond_count());
     row_count = info.stats.copied + info.stats.deleted + updated;
-    my_ok(thd, row_count, id, buff);
+    if (!has_returning()) my_ok(thd, row_count, id, buff);
   }
+  if (has_returning() && returning_sender.end(thd)) return true;
   thd->updated_row_count += row_count;
 
   /*
