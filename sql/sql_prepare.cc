@@ -1399,6 +1399,19 @@ bool Prepared_statement::prepare_query(THD *thd) {
     if (result == nullptr) result = m_lex->result;
     types = unit->get_unit_column_types();
     no_columns = result->field_count(*types);
+  } else if (!m_lex->is_explain() && m_lex->m_sql_cmd != nullptr &&
+             m_lex->m_sql_cmd->sql_cmd_type() == SQL_CMD_DML &&
+             down_cast<Sql_cmd_dml *>(m_lex->m_sql_cmd)->has_returning()) {
+    // INSERT/UPDATE/DELETE ... RETURNING produce a result set at execution but
+    // do not carry CF_HAS_RESULT_SET (which is a static per-command flag).
+    // Advertise the RETURNING columns in the COM_STMT_PREPARE response from the
+    // resolved RETURNING item list so prepare-time and execute-time metadata
+    // agree.
+    Sql_cmd_dml *const dml = down_cast<Sql_cmd_dml *>(m_lex->m_sql_cmd);
+    types = const_cast<mem_root_deque<Item *> *>(dml->returning_fields());
+    result = new (thd->mem_root) Query_result_send();
+    if (result == nullptr) return true;
+    no_columns = result->field_count(*types);
   }
 
   return send_statement(thd, this, no_columns, result, types);
