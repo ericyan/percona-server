@@ -1,0 +1,98 @@
+# UPDATE ... RETURNING: resolution and restrictions
+# (execution of the result set is covered in a later commit)
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y');
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+# error: unknown column in RETURNING (resolved at prepare)
+UPDATE t1 SET a = a + 1 RETURNING nosuchcol;
+ERROR 42S22: Unknown column 'nosuchcol' in 'field list'
+# error: RETURNING not supported for multi-table UPDATE
+UPDATE t1, t2 SET t1.a = t2.a WHERE t1.id = t2.id RETURNING t1.a;
+ERROR HY000: The RETURNING clause is not supported for multi-table UPDATE statements.
+# single-table UPDATE ... RETURNING with a subquery in WHERE is allowed
+# (must stay on the single-table executor, not rejected as multi-table)
+UPDATE t1 SET a = a + 1
+WHERE id IN (SELECT id FROM t2 WHERE a > 150) RETURNING id, a;
+id	a
+2	21
+DROP TABLE t1, t2;
+#
+# UPDATE ... RETURNING: streaming of the result set
+#
+# NOTE: the RETURNING result set is produced in update (scan) order.
+# --sorted_result is used below to make the expected output stable
+# regardless of that order.
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# basic single-table UPDATE with explicit columns: post-update values
+# are returned, one row per matched row
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING id, a;
+id	a
+1	11
+2	21
+3	31
+SELECT * FROM t1 ORDER BY id;
+id	a	b
+1	11	x
+2	21	y
+3	31	z
+4	40	w
+# RETURNING * (all columns, post-update image)
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING *;
+id	a	b
+1	12	x
+2	22	y
+3	32	z
+SELECT * FROM t1 ORDER BY id;
+id	a	b
+1	12	x
+2	22	y
+3	32	z
+4	40	w
+# expression + alias
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING id, a * 2 AS dbl;
+id	dbl
+1	26
+2	46
+3	66
+SELECT * FROM t1 ORDER BY id;
+id	a	b
+1	13	x
+2	23	y
+3	33	z
+4	40	w
+# qualified wildcard
+UPDATE t1 SET a = a + 1 WHERE id IN (1, 2, 3) RETURNING t1.*;
+id	a	b
+1	14	x
+2	24	y
+3	34	z
+SELECT * FROM t1 ORDER BY id;
+id	a	b
+1	14	x
+2	24	y
+3	34	z
+4	40	w
+# ORDER BY ... LIMIT (applies to the UPDATE) with RETURNING: only the
+# updated rows are returned
+UPDATE t1 SET a = a + 1 ORDER BY id LIMIT 2 RETURNING id, a;
+id	a
+1	15
+2	25
+SELECT * FROM t1 ORDER BY id;
+id	a	b
+1	15	x
+2	25	y
+3	34	z
+4	40	w
+# no-match update: empty result set (column header, zero rows)
+UPDATE t1 SET a = a + 1 WHERE id = 1000 RETURNING a;
+a
+# no-op update (new value equals old value): matched rows are still
+# returned
+UPDATE t1 SET a = a WHERE id IN (1, 2) RETURNING id, a;
+id	a
+1	15
+2	25
+DROP TABLE t1;

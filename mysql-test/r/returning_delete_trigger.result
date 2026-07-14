@@ -1,0 +1,26 @@
+CREATE TABLE t1 (id INT PRIMARY KEY, val INT) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+CREATE TRIGGER trg BEFORE DELETE ON t1 FOR EACH ROW
+BEGIN
+IF OLD.id = 2 THEN
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject delete';
+END IF;
+END|
+# The trigger rejects id=2; the whole statement must fail and roll back.
+DELETE FROM t1 ORDER BY id RETURNING id, val;
+ERROR 45000: reject delete
+# All three rows must still be present (nothing deleted, nothing leaked).
+SELECT * FROM t1;
+id	val
+1	10
+2	20
+3	30
+# Deleting only rows the trigger allows works and streams them.
+DELETE FROM t1 WHERE id <> 2 RETURNING id, val;
+id	val
+1	10
+3	30
+SELECT * FROM t1;
+id	val
+2	20
+DROP TABLE t1;

@@ -1,0 +1,113 @@
+# DELETE ... RETURNING: resolution and restrictions
+# (execution of the result set is not hooked up in this commit)
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y');
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+# error: unknown column in RETURNING (resolved at prepare)
+DELETE FROM t1 RETURNING nosuchcol;
+ERROR 42S22: Unknown column 'nosuchcol' in 'field list'
+# error: multi-table DELETE ... RETURNING is a syntax error
+DELETE t1 FROM t1, t2 WHERE t1.id = t2.id RETURNING t1.id;
+ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'RETURNING t1.id' at line 1
+# single-table DELETE ... RETURNING with a subquery in WHERE is allowed
+# (must stay on the single-table executor, not switched to multi-table)
+DELETE FROM t1 WHERE id IN (SELECT id FROM t2) RETURNING id;
+id
+1
+2
+DROP TABLE t1, t2;
+#
+# DELETE ... RETURNING: execution (streams the pre-delete row image)
+#
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# basic DELETE with explicit columns, returning the pre-delete values
+# of each deleted row
+DELETE FROM t1 WHERE a >= 20 RETURNING id, a, b;
+id	a	b
+2	20	y
+3	30	z
+4	40	w
+# remaining rows after the delete above
+SELECT * FROM t1;
+id	a	b
+1	10	x
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# RETURNING * : pre-delete image of all columns
+DELETE FROM t1 WHERE a >= 20 RETURNING *;
+id	a	b
+2	20	y
+3	30	z
+4	40	w
+SELECT * FROM t1;
+id	a	b
+1	10	x
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# expression + alias in RETURNING
+DELETE FROM t1 WHERE a >= 20 RETURNING id, a * 2 AS dbl;
+id	dbl
+2	40
+3	60
+4	80
+SELECT * FROM t1;
+id	a	b
+1	10	x
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# qualified wildcard t1.*
+DELETE FROM t1 WHERE a >= 20 RETURNING t1.*;
+id	a	b
+2	20	y
+3	30	z
+4	40	w
+SELECT * FROM t1;
+id	a	b
+1	10	x
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# ORDER BY ... LIMIT applies to the DELETE; only the deleted (limited)
+# rows are returned by RETURNING
+DELETE FROM t1 ORDER BY id LIMIT 2 RETURNING id, a;
+id	a
+1	10
+2	20
+# remaining rows after the limited delete above
+SELECT * FROM t1;
+id	a	b
+3	30	z
+4	40	w
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# no matching rows: empty RETURNING result set (column header, zero rows)
+DELETE FROM t1 WHERE a > 1000 RETURNING a;
+a
+# no rows deleted, table is unchanged
+SELECT * FROM t1;
+id	a	b
+1	10	x
+2	20	y
+3	30	z
+4	40	w
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+# DELETE with no WHERE clause exercises the ha_delete_all_rows() fast
+# path skip: all rows must still be streamed back via RETURNING
+DELETE FROM t1 RETURNING id, a;
+id	a
+1	10
+2	20
+3	30
+4	40
+# table is now empty
+SELECT * FROM t1;
+id	a	b
+DROP TABLE t1;

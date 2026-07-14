@@ -80,6 +80,7 @@
 #include "sql/sql_opt_exec_shared.h"
 #include "sql/sql_optimizer.h"  // optimize_cond, substitute_gc
 #include "sql/sql_resolver.h"   // setup_order
+#include "sql/sql_returning.h"  // Returning_sender
 #include "sql/sql_select.h"
 #include "sql/sql_update.h"  // switch_to_multi_table_if_subqueries
 #include "sql/sql_view.h"    // check_key_in_view
@@ -216,6 +217,9 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   */
   int error = 0;
   ha_rows deleted_rows = 0;
+
+  Returning_sender returning_sender;
+
   bool reverse = false;
   /// read_removal is only used by NDB storage engine
   bool read_removal = false;
@@ -322,12 +326,16 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
       - We will not be binlogging this statement in row-based, and
       - there should be no delete triggers associated with the table.
   */
+  // ha_delete_all_rows() removes all rows inside the storage engine without
+  // exposing per-row images, so it cannot feed a RETURNING result set.
+  // RETURNING must use the row-by-row loop below instead.
   if (!using_limit && const_cond_result && !no_rows &&
       !(specialflag & SPECIAL_NO_NEW_FUNC) &&
       ((!thd->is_current_stmt_binlog_format_row() ||  // not ROW binlog-format
         thd->is_current_stmt_binlog_disabled()) &&    // no binlog for this
                                                       // command
-       !has_delete_triggers)) {
+       !has_delete_triggers) &&
+       !has_returning()) {
     /* Update the table->file->stats.records number */
     table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
     ha_rows const maybe_deleted = table->file->stats.records;
@@ -407,7 +415,13 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
             explain_single_table_modification(thd, thd, &plan, query_block);
         return err;
       }
-      my_ok(thd, 0);
+      if (has_returning()) {
+        if (returning_sender.begin(thd, *m_returning_fields) ||
+            returning_sender.end(thd))
+          return true;
+      } else {
+        my_ok(thd, 0);
+      }
       return false;
     }
   }
@@ -452,7 +466,15 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
         return err;
       }
 
-      my_ok(thd, 0);
+      if (has_returning()) {
+        // No matching rows: still return an empty RETURNING result set
+        // (column metadata + EOF, zero rows).
+        if (returning_sender.begin(thd, *m_returning_fields) ||
+            returning_sender.end(thd))
+          return true;
+      } else {
+        my_ok(thd, 0);
+      }
       return false;  // Nothing to delete
     }
   }  // Ends scope for optimizer trace wrapper
@@ -571,6 +593,11 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
 
     THD_STAGE_INFO(thd, stage_updating);
 
+    // Single-table DELETE ... RETURNING streams the pre-delete row image. Send
+    // the result-set metadata once before the delete loop begins.
+    if (has_returning() && returning_sender.begin(thd, *m_returning_fields))
+      return true;
+
     if (has_after_triggers) {
       /*
         The table has AFTER DELETE triggers that might access to subject table
@@ -617,6 +644,16 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
       if (DeleteCurrentRowAndProcessTriggers(thd, table, has_before_triggers,
                                              has_after_triggers,
                                              &deleted_rows)) {
+        error = 1;
+        break;
+      }
+
+      // Stream the row for RETURNING only after the BEFORE trigger, the engine
+      // delete, and the AFTER trigger have all completed successfully, so a
+      // row is never sent to the client before it has actually been deleted.
+      // record[0] still holds the (pre-delete) row image at this point.
+      if (has_returning() &&
+          returning_sender.send_row(thd, *m_returning_fields)) {
         error = 1;
         break;
       }
@@ -685,7 +722,11 @@ cleanup:
   assert(transactional_table || deleted_rows == 0 ||
          thd->get_transaction()->cannot_safely_rollback(Transaction_ctx::STMT));
   if (error < 0) {
-    my_ok(thd, deleted_rows);
+    if (!has_returning()) {
+      my_ok(thd, deleted_rows);
+    } else if (returning_sender.end(thd)) {
+      return true;
+    }
     DBUG_PRINT("info", ("%ld records deleted", (long)deleted_rows));
   }
 
@@ -790,7 +831,13 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     multitable = true;
   }
 
-  if (!multitable && select->first_inner_query_expression() != nullptr &&
+  // A single-table DELETE ... RETURNING must stay on the single-table
+  // executor (delete_from_single_table), which streams the RETURNING result
+  // set; a subquery in WHERE must not switch it to the multi-table iterator
+  // path. Correctness is preserved (the subquery is still evaluated); only
+  // the subquery-materialization/semijoin optimization is given up.
+  if (!multitable && !has_returning() &&
+      select->first_inner_query_expression() != nullptr &&
       should_switch_to_multi_table_if_subqueries(thd, select, table_list))
     multitable = true;
 
@@ -849,6 +896,14 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
 
   thd->want_privilege = want_privilege_saved;
   thd->mark_used_columns = mark_used_columns_saved;
+
+  // Resolve the RETURNING clause against the (single) target table now that
+  // its columns are set up. Multi-table DELETE ... RETURNING is rejected by
+  // the grammar, so the name-resolution context resolves to the target table
+  // only.
+  if (has_returning() &&
+      setup_returning_fields(thd, select, m_returning_fields))
+    return true;
 
   if (select->has_ft_funcs() && setup_ftfuncs(thd, select))
     return true; /* purecov: inspected */

@@ -104,6 +104,7 @@
 #include "sql/sql_optimizer.h"  // substitute_gc
 #include "sql/sql_partition.h"  // partition_key_modified
 #include "sql/sql_resolver.h"   // setup_order
+#include "sql/sql_returning.h"
 #include "sql/sql_select.h"
 #include "sql/sql_tmp_table.h"  // create_tmp_table
 #include "sql/sql_view.h"       // check_key_in_view
@@ -376,6 +377,8 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
   */
   int error = 0;
 
+  Returning_sender returning_sender;
+
   Query_block *const query_block = lex->query_block;
   Query_expression *const unit = lex->unit;
   Table_ref *const table_list = query_block->get_table_list();
@@ -544,7 +547,15 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
       char buff[MYSQL_ERRMSG_SIZE];
       snprintf(buff, sizeof(buff), ER_THD(thd, ER_UPDATE_INFO), 0L, 0L,
                (long)thd->get_stmt_da()->current_statement_cond_count());
-      my_ok(thd, 0, 0, buff);
+      if (has_returning()) {
+        // No matching rows: still return an empty RETURNING result set
+        // (column metadata + EOF, zero rows).
+        if (returning_sender.begin(thd, *m_returning_fields) ||
+            returning_sender.end(thd))
+          return true;
+      } else {
+        my_ok(thd, 0, 0, buff);
+      }
 
       DBUG_PRINT("info", ("0 records updated"));
       return false;
@@ -876,8 +887,17 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
 
     uint dup_key_found;
 
-    error = table->file->ha_fast_update(thd, query_block->fields,
-                                        *update_value_list, *conds);
+    // ha_fast_update performs the update entirely inside the storage engine
+    // without exposing a per-row image, so it cannot feed a RETURNING result
+    // set. When RETURNING is present, first send the result-set metadata and
+    // force the row-by-row path below (by returning ENOTSUP) so each updated
+    // row can be streamed.
+    if (has_returning() && returning_sender.begin(thd, *m_returning_fields))
+      return true;
+    error = has_returning()
+                ? ENOTSUP
+                : table->file->ha_fast_update(thd, query_block->fields,
+                                              *update_value_list, *conds);
     if (error == 0)
       error = -1;  // error < 0 means really no error at all (see below)
     else if (error != ENOTSUP) {
@@ -1028,6 +1048,16 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         if (!error && has_after_triggers &&
             table->triggers->process_triggers(thd, TRG_EVENT_UPDATE,
                                               TRG_ACTION_AFTER, true)) {
+          error = 1;
+          break;
+        }
+
+        // Stream the post-update (NEW) row image for RETURNING. record[0]
+        // holds the new values for every matched row (filled by
+        // fill_record_n_invoke_before_triggers above), including rows whose
+        // value did not actually change.
+        if (!error && has_returning() &&
+            returning_sender.send_row(thd, *m_returning_fields)) {
           error = 1;
           break;
         }
@@ -1184,7 +1214,11 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
             ? found_rows
             : updated_rows;
-    my_ok(thd, row_count, id, buff);
+    if (!has_returning()) {
+      my_ok(thd, row_count, id, buff);
+    } else if (returning_sender.end(thd)) {
+      return true;
+    }
     thd->updated_row_count += row_count;
     DBUG_PRINT("info", ("%ld records updated", (long)updated_rows));
   }
@@ -1572,7 +1606,24 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
     multitable = true;
   }
 
-  if (!multitable && select->first_inner_query_expression() != nullptr &&
+  // RETURNING is only supported for single-table UPDATE, and is streamed by
+  // the traditional single-table executor (update_single_table()). At this
+  // point `multitable` reflects genuine multi-table UPDATE: either multiple
+  // target tables, or a multi-table updatable view (the hypergraph optimizer
+  // is forced off for RETURNING, so it does not inflate this flag). Reject
+  // such statements with a clear error.
+  if (has_returning() && multitable) {
+    my_error(ER_RETURNING_NOT_SUPPORTED_FOR_MULTI_TABLE, MYF(0), "UPDATE");
+    return true;
+  }
+
+  // Keep single-table UPDATE ... RETURNING on the single-table executor even
+  // when a subquery would otherwise trigger a switch to the multi-table
+  // iterator path, which does not stream a RETURNING result set. Correctness
+  // is preserved (the single-table path evaluates the subquery); only the
+  // subquery-materialization/semijoin optimization is given up here.
+  if (!multitable && !has_returning() &&
+      select->first_inner_query_expression() != nullptr &&
       should_switch_to_multi_table_if_subqueries(thd, select, table_list))
     multitable = true;
 
@@ -1648,6 +1699,13 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
     return true; /* purecov: inspected */
 
   thd->mark_used_columns = mark_used_columns_saved;
+
+  // Resolve the RETURNING clause against the (single) target table now that
+  // its columns are set up. Multi-table UPDATE was rejected above, so the
+  // name-resolution context resolves to the target table only.
+  if (has_returning() &&
+      setup_returning_fields(thd, select, m_returning_fields))
+    return true;
 
   if (select->resolve_limits(thd)) return true;
 

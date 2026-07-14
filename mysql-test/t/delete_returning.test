@@ -1,0 +1,102 @@
+--echo # DELETE ... RETURNING: resolution and restrictions
+--echo # (execution of the result set is not hooked up in this commit)
+
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y');
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+
+--echo # error: unknown column in RETURNING (resolved at prepare)
+--error ER_BAD_FIELD_ERROR
+DELETE FROM t1 RETURNING nosuchcol;
+
+--echo # error: multi-table DELETE ... RETURNING is a syntax error
+--error ER_PARSE_ERROR
+DELETE t1 FROM t1, t2 WHERE t1.id = t2.id RETURNING t1.id;
+
+--echo # single-table DELETE ... RETURNING with a subquery in WHERE is allowed
+--echo # (must stay on the single-table executor, not switched to multi-table)
+DELETE FROM t1 WHERE id IN (SELECT id FROM t2) RETURNING id;
+
+DROP TABLE t1, t2;
+
+--echo #
+--echo # DELETE ... RETURNING: execution (streams the pre-delete row image)
+--echo #
+
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # basic DELETE with explicit columns, returning the pre-delete values
+--echo # of each deleted row
+--sorted_result
+DELETE FROM t1 WHERE a >= 20 RETURNING id, a, b;
+
+--echo # remaining rows after the delete above
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # RETURNING * : pre-delete image of all columns
+--sorted_result
+DELETE FROM t1 WHERE a >= 20 RETURNING *;
+
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # expression + alias in RETURNING
+--sorted_result
+DELETE FROM t1 WHERE a >= 20 RETURNING id, a * 2 AS dbl;
+
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # qualified wildcard t1.*
+--sorted_result
+DELETE FROM t1 WHERE a >= 20 RETURNING t1.*;
+
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # ORDER BY ... LIMIT applies to the DELETE; only the deleted (limited)
+--echo # rows are returned by RETURNING
+--sorted_result
+DELETE FROM t1 ORDER BY id LIMIT 2 RETURNING id, a;
+
+--echo # remaining rows after the limited delete above
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # no matching rows: empty RETURNING result set (column header, zero rows)
+DELETE FROM t1 WHERE a > 1000 RETURNING a;
+
+--echo # no rows deleted, table is unchanged
+SELECT * FROM t1;
+
+DROP TABLE t1;
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(10));
+INSERT INTO t1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z'), (4, 40, 'w');
+
+--echo # DELETE with no WHERE clause exercises the ha_delete_all_rows() fast
+--echo # path skip: all rows must still be streamed back via RETURNING
+--sorted_result
+DELETE FROM t1 RETURNING id, a;
+
+--echo # table is now empty
+SELECT * FROM t1;
+
+DROP TABLE t1;

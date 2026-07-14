@@ -1,0 +1,33 @@
+# DELETE ... RETURNING must not stream a row before that row has actually been
+# deleted (BEFORE trigger + engine delete + AFTER trigger). A buffered client
+# cannot observe the intermediate streaming order, but it can observe that a
+# BEFORE-trigger failure on a later row leaves the whole statement rolled back
+# with no visible effect and no result rows. Review finding #4.
+
+CREATE TABLE t1 (id INT PRIMARY KEY, val INT) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+
+delimiter |;
+CREATE TRIGGER trg BEFORE DELETE ON t1 FOR EACH ROW
+BEGIN
+  IF OLD.id = 2 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject delete';
+  END IF;
+END|
+delimiter ;|
+
+--echo # The trigger rejects id=2; the whole statement must fail and roll back.
+--error ER_SIGNAL_EXCEPTION
+DELETE FROM t1 ORDER BY id RETURNING id, val;
+
+--echo # All three rows must still be present (nothing deleted, nothing leaked).
+--sorted_result
+SELECT * FROM t1;
+
+--echo # Deleting only rows the trigger allows works and streams them.
+--sorted_result
+DELETE FROM t1 WHERE id <> 2 RETURNING id, val;
+--sorted_result
+SELECT * FROM t1;
+
+DROP TABLE t1;

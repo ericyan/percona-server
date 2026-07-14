@@ -10559,6 +10559,9 @@ ER_LOG_NAME_NOT_MATCHING_SEC_LOG_PATH_CLIENT
 
 start-error-number 7100
 
+ER_RETURNING_NOT_SUPPORTED_FOR_MULTI_TABLE
+  eng "The RETURNING clause is not supported for multi-table %s statements."
+
 #
 # End of Percona Server 8.4/9.7 client messages
 #

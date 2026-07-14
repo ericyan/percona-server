@@ -13559,9 +13559,10 @@ update_stmt:
           opt_where_clause      /* #7 */
           opt_order_clause      /* #8 */
           opt_simple_limit      /* #9 */
+          opt_returning_clause  /* #10 */
           {
             $$= NEW_PTN PT_update(@$, $1, $2, $3, $4, $5, $7.column_list, $7.value_list,
-                                  $8, $9, $10);
+                                  $8, $9, $10, $11);
           }
         ;
 
@@ -13615,8 +13616,9 @@ delete_stmt:
           opt_where_clause
           opt_order_clause
           opt_simple_limit
+          opt_returning_clause
           {
-            $$= NEW_PTN PT_delete(@$, $1, $2, $3, $5, $6, $7, $8, $9, $10);
+            $$= NEW_PTN PT_delete(@$, $1, $2, $3, $5, $6, $7, $8, $9, $10, $11);
           }
         | opt_with_clause
           DELETE_SYM
