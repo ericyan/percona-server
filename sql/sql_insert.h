@@ -33,6 +33,7 @@
 #include "sql/query_result.h"     // Query_result_interceptor
 #include "sql/sql_cmd_dml.h"      // Sql_cmd_dml
 #include "sql/sql_data_change.h"  // enum_duplicates
+#include "sql/sql_returning.h"    // Returning_sender
 #include "sql/table.h"
 #include "sql/thr_malloc.h"
 
@@ -69,6 +70,11 @@ class Query_result_insert : public Query_result_interceptor {
      allowed.
    */
   mem_root_deque<Item *> *fields;
+
+  /// The RETURNING clause's items, if any. Not owned by this object.
+  mem_root_deque<Item *> *m_returning_fields{nullptr};
+  /// Streams RETURNING rows back to the client, when m_returning_fields set.
+  Returning_sender m_returning_sender;
 
  protected:
   /// ha_start_bulk_insert has been called.
@@ -154,6 +160,13 @@ are found inside the COPY_INFO.
   bool send_eof(THD *thd) override;
   void abort_result_set(THD *thd) override;
   void cleanup() override;
+
+  /// Set the RETURNING clause's items, to stream them back after insertion.
+  void set_returning_fields(mem_root_deque<Item *> *fields) {
+    m_returning_fields = fields;
+  }
+  /// Whether this statement has a RETURNING clause.
+  bool has_returning() const { return m_returning_fields != nullptr; }
 
  private:
   /**

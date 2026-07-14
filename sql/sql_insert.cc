@@ -1363,10 +1363,12 @@ bool Sql_cmd_insert_base::prepare_inner(THD *thd) {
     if (lex->sql_command == SQLCOM_REPLACE_SELECT)
       lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_REPLACE_SELECT);
 
-    result = new (thd->mem_root)
+    Query_result_insert *const insert_result = new (thd->mem_root)
         Query_result_insert(table_list, &insert_field_list, &insert_field_list,
                             &update_field_list, &update_value_list, duplicates);
-    if (result == nullptr) return true; /* purecov: inspected */
+    if (insert_result == nullptr) return true; /* purecov: inspected */
+    if (has_returning()) insert_result->set_returning_fields(m_returning_fields);
+    result = insert_result;
 
     if (unit->is_set_operation()) {
       /*
@@ -2312,6 +2314,9 @@ bool Query_result_insert::start_execution(THD *thd) {
   }
   info.reset_counters();
 
+  if (has_returning() && m_returning_sender.begin(thd, *m_returning_fields))
+    return true;
+
   return false;
 }
 
@@ -2377,6 +2382,10 @@ bool Query_result_insert::send_data(THD *thd,
   error = write_record(thd, table, &info, &update);
 
   DEBUG_SYNC(thd, "create_select_after_write_rows_event");
+
+  if (!error && has_returning() &&
+      m_returning_sender.send_row(thd, *m_returning_fields))
+    error = true;
 
   if (!error &&
       (table->triggers || info.get_duplicate_handling() == DUP_UPDATE)) {
@@ -2511,7 +2520,10 @@ bool Query_result_insert::send_eof(THD *thd) {
                   ? thd->first_successful_insert_id_in_prev_stmt
                   : (info.stats.copied ? autoinc_value_of_last_inserted_row
                                        : 0));
-  my_ok(thd, row_count, id, buff);
+  if (!has_returning())
+    my_ok(thd, row_count, id, buff);
+  else if (m_returning_sender.end(thd))
+    return true;
   thd->updated_row_count += row_count;
 
   /*
