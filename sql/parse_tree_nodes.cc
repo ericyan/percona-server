@@ -1207,6 +1207,19 @@ Sql_cmd *PT_insert::make_cmd(THD *thd) {
     sql_cmd->update_value_list = opt_on_duplicate_value_list->value;
   }
 
+  if (opt_returning_clause != nullptr) {
+    // Itemize the RETURNING expressions directly. We deliberately do NOT call
+    // opt_returning_clause->contextualize(): select_item_list produces a
+    // PT_select_item_list whose do_contextualize() assigns pc->select->fields,
+    // which would clobber the INSERT's field list. The RETURNING list is
+    // resolved separately against the target table in
+    // Sql_cmd_insert_base::prepare_inner() (a later commit).
+    for (Item *&item : opt_returning_clause->value) {
+      if (item->itemize(&pc, &item)) return nullptr;
+    }
+    sql_cmd->set_returning_fields(&opt_returning_clause->value);
+  }
+
   return sql_cmd;
 }
 

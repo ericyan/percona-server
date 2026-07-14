@@ -1693,6 +1693,7 @@ void warn_on_deprecated_user_defined_collation(
         fields_or_vars
         opt_field_or_var_spec
         row_value_explicit
+        opt_returning_clause
 
 %type <var_type>
         option_type opt_var_type opt_rvalue_system_variable_type
@@ -13215,6 +13216,7 @@ insert_stmt:
           insert_from_constructor      /* #7 */
           opt_values_reference         /* #8 */
           opt_insert_update_list       /* #9 */
+          opt_returning_clause         /* #10 */
           {
             DBUG_EXECUTE_IF("bug29614521_simulate_oom",
                              DBUG_SET("+d,simulate_out_of_memory"););
@@ -13222,7 +13224,8 @@ insert_stmt:
                                   $7.column_list, $7.row_value_list,
                                   nullptr,
                                   $8.table_alias, $8.column_list,
-                                  $9.column_list, $9.value_list);
+                                  $9.column_list, $9.value_list,
+                                  $10);
             DBUG_EXECUTE_IF("bug29614521_simulate_oom",
                             DBUG_SET("-d,bug29614521_simulate_oom"););
           }
@@ -13236,6 +13239,7 @@ insert_stmt:
           update_list                  /* #8 */
           opt_values_reference         /* #9 */
           opt_insert_update_list       /* #10 */
+          opt_returning_clause         /* #11 */
           {
             PT_insert_values_list *one_row= NEW_PTN PT_insert_values_list(@$, YYMEM_ROOT);
             if (one_row == nullptr || one_row->push_back(&$8.value_list->value))
@@ -13244,7 +13248,8 @@ insert_stmt:
                                   $8.column_list, one_row,
                                   nullptr,
                                   $9.table_alias, $9.column_list,
-                                  $10.column_list, $10.value_list);
+                                  $10.column_list, $10.value_list,
+                                  $11);
           }
         | INSERT_SYM                   /* #1 */
           insert_lock_option           /* #2 */
@@ -13254,12 +13259,14 @@ insert_stmt:
           opt_use_partition            /* #6 */
           insert_query_expression      /* #7 */
           opt_insert_update_list       /* #8 */
+          opt_returning_clause         /* #9 */
           {
             $$= NEW_PTN PT_insert(@$, false, $1, $2, $3, $5, $6,
                                   $7.column_list, nullptr,
                                   $7.insert_query_expression,
                                   NULL_CSTR, nullptr,
-                                  $8.column_list, $8.value_list);
+                                  $8.column_list, $8.value_list,
+                                  $9);
           }
         ;
 
@@ -13270,12 +13277,14 @@ replace_stmt:
           table_ident                   /* #4 */
           opt_use_partition             /* #5 */
           insert_from_constructor       /* #6 */
+          opt_returning_clause          /* #7 */
           {
             $$= NEW_PTN PT_insert(@$, true, $1, $2, false, $4, $5,
                                   $6.column_list, $6.row_value_list,
                                   nullptr,
                                   NULL_CSTR, nullptr,
-                                  nullptr, nullptr);
+                                  nullptr, nullptr,
+                                  $7);
           }
         | REPLACE_SYM                   /* #1 */
           replace_lock_option           /* #2 */
@@ -13284,6 +13293,7 @@ replace_stmt:
           opt_use_partition             /* #5 */
           SET_SYM                       /* #6 */
           update_list                   /* #7 */
+          opt_returning_clause          /* #8 */
           {
             PT_insert_values_list *one_row= NEW_PTN PT_insert_values_list(@$, YYMEM_ROOT);
             if (one_row == nullptr || one_row->push_back(&$7.value_list->value))
@@ -13292,7 +13302,8 @@ replace_stmt:
                                   $7.column_list, one_row,
                                   nullptr,
                                   NULL_CSTR, nullptr,
-                                  nullptr, nullptr);
+                                  nullptr, nullptr,
+                                  $8);
           }
         | REPLACE_SYM                   /* #1 */
           replace_lock_option           /* #2 */
@@ -13300,13 +13311,20 @@ replace_stmt:
           table_ident                   /* #4 */
           opt_use_partition             /* #5 */
           insert_query_expression       /* #6 */
+          opt_returning_clause          /* #7 */
           {
             $$= NEW_PTN PT_insert(@$, true, $1, $2, false, $4, $5,
                                   $6.column_list, nullptr,
                                   $6.insert_query_expression,
                                   NULL_CSTR, nullptr,
-                                  nullptr, nullptr);
+                                  nullptr, nullptr,
+                                  $7);
           }
+        ;
+
+opt_returning_clause:
+          %empty { $$ = nullptr; }
+        | RETURNING_SYM select_item_list { $$ = $2; }
         ;
 
 insert_lock_option:

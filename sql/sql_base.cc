@@ -9748,6 +9748,55 @@ bool insert_fields(THD *thd, Query_block *query_block, const char *db_name,
   return true;
 }
 
+/**
+  Resolve the RETURNING clause expression list against the DML target table.
+
+  Expands '*' and 'tbl.*' wildcards against the target table (mirroring
+  Query_block::setup_wild) and then resolves every expression with SELECT
+  privilege, marking referenced columns for reading. The RETURNING list is
+  stored separately from Query_block::fields, so this cannot reuse the query
+  block's own setup_wild()/setup_fields() driver.
+
+  @param thd     Thread handler.
+  @param select  Query block providing the name-resolution context (its context
+                 must currently resolve to the target table only).
+  @param fields  The RETURNING expression list (resolved in place).
+
+  @returns true on error.
+*/
+bool setup_returning_fields(THD *thd, Query_block *select,
+                            mem_root_deque<Item *> *fields) {
+  const enum_mark_columns save_mark_used_columns = thd->mark_used_columns;
+  thd->mark_used_columns = MARK_COLUMNS_READ;
+
+  bool rc = false;
+
+  // Expand '*' / 'tbl.*' against the target table (see Query_block::setup_wild).
+  for (auto it = fields->begin(); !rc && it != fields->end(); ++it) {
+    Item *item = *it;
+    Item_field *item_field;
+    if (item->type() == Item::FIELD_ITEM &&
+        (item_field = down_cast<Item_field *>(item)) != nullptr &&
+        item_field->is_asterisk()) {
+      assert(item_field->field == nullptr);
+      if (insert_fields(thd, select, item_field->db_name,
+                        item_field->table_name, fields, &it,
+                        item_field->any_privileges))
+        rc = true;
+    }
+  }
+
+  // Resolve the RETURNING expressions with SELECT privilege.
+  if (!rc)
+    rc = setup_fields(thd, /*want_privilege=*/SELECT_ACL,
+                      /*allow_sum_func=*/false, /*split_sum_funcs=*/false,
+                      /*column_update=*/false, /*typed_items=*/nullptr, fields,
+                      Ref_item_array());
+
+  thd->mark_used_columns = save_mark_used_columns;
+  return rc;
+}
+
 /******************************************************************************
 ** Fill a record with data (for INSERT or UPDATE)
 ** Returns : 1 if some field has wrong type

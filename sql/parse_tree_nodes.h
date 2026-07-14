@@ -2097,6 +2097,7 @@ class PT_insert final : public Parse_tree_root {
   Create_col_name_list *const opt_values_column_list;
   PT_item_list *const opt_on_duplicate_column_list;
   PT_item_list *const opt_on_duplicate_value_list;
+  PT_item_list *const opt_returning_clause;
 
  public:
   PT_insert(const POS &pos, bool is_replace_arg, PT_hint_list *opt_hints_arg,
@@ -2108,7 +2109,8 @@ class PT_insert final : public Parse_tree_root {
             const LEX_CSTRING &opt_values_table_alias_arg,
             Create_col_name_list *opt_values_column_list_arg,
             PT_item_list *opt_on_duplicate_column_list_arg,
-            PT_item_list *opt_on_duplicate_value_list_arg)
+            PT_item_list *opt_on_duplicate_value_list_arg,
+            PT_item_list *opt_returning_clause_arg)
       : super(pos),
         is_replace(is_replace_arg),
         opt_hints(opt_hints_arg),
@@ -2122,7 +2124,8 @@ class PT_insert final : public Parse_tree_root {
         opt_values_table_alias(opt_values_table_alias_arg.str),
         opt_values_column_list(opt_values_column_list_arg),
         opt_on_duplicate_column_list(opt_on_duplicate_column_list_arg),
-        opt_on_duplicate_value_list(opt_on_duplicate_value_list_arg) {
+        opt_on_duplicate_value_list(opt_on_duplicate_value_list_arg),
+        opt_returning_clause(opt_returning_clause_arg) {
     // REPLACE statement can't have IGNORE flag:
     assert(!is_replace || !ignore);
     // REPLACE statement can't have ON DUPLICATE KEY UPDATE clause:
