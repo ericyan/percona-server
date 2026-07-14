@@ -603,11 +603,17 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     if (has_returning() && returning_sender.begin(thd, *m_returning_fields))
       return true;
 
-    if (has_after_triggers) {
+    if (has_after_triggers || has_returning()) {
       /*
         The table has AFTER DELETE triggers that might access to subject table
         and therefore might need delete to be done immediately. So we turn-off
         the batching.
+
+        RETURNING likewise forces immediate, synchronous deletes: a batching
+        engine (e.g. NDB) may queue the delete and only report success or
+        failure at end_bulk_delete() or commit, but the row is streamed to the
+        client as soon as it is processed, so the delete must be confirmed
+        synchronously first.
       */
       (void)table->file->ha_extra(HA_EXTRA_DELETE_CANNOT_BATCH);
       will_batch = false;
@@ -969,6 +975,17 @@ bool Sql_cmd_delete::execute_inner(THD *thd) {
                                    true, 0);
       return explain_single_table_modification(thd, thd, &plan,
                                                lex->query_block);
+    }
+    if (has_returning()) {
+      // Partition pruning during optimization made the query empty. A
+      // RETURNING statement must still produce a result set (column metadata
+      // + EOF, zero rows) rather than an OK packet, so its wire shape does not
+      // depend on the optimizer.
+      Returning_sender returning_sender;
+      if (returning_sender.begin(thd, *m_returning_fields) ||
+          returning_sender.end(thd))
+        return true;
+      return false;
     }
     my_ok(thd);
     return false;
