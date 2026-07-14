@@ -603,11 +603,17 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     if (has_returning() && returning_sender.begin(thd, *m_returning_fields))
       return true;
 
-    if (has_after_triggers) {
+    if (has_after_triggers || has_returning()) {
       /*
         The table has AFTER DELETE triggers that might access to subject table
         and therefore might need delete to be done immediately. So we turn-off
         the batching.
+
+        RETURNING likewise forces immediate, synchronous deletes: a batching
+        engine (e.g. NDB) may queue the delete and only report success or
+        failure at end_bulk_delete() or commit, but the row is streamed to the
+        client as soon as it is processed, so the delete must be confirmed
+        synchronously first.
       */
       (void)table->file->ha_extra(HA_EXTRA_DELETE_CANNOT_BATCH);
       will_batch = false;
