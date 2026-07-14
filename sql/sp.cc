@@ -2448,12 +2448,17 @@ uint sp_get_flags_for_command(LEX *lex) {
     case SQLCOM_INSERT_SELECT:
     case SQLCOM_REPLACE:
     case SQLCOM_REPLACE_SELECT:
+    case SQLCOM_UPDATE:
+    case SQLCOM_UPDATE_MULTI:
+    case SQLCOM_DELETE:
+    case SQLCOM_DELETE_MULTI:
       /*
-        INSERT/REPLACE ... RETURNING returns a result set to the client, so it
-        must be treated like a multi-result statement: permitted inside a
-        stored procedure, but rejected inside a stored function or trigger by
-        is_not_allowed_in_function() (ER_SP_NO_RETSET). A plain INSERT/REPLACE
-        (no RETURNING) returns no result set, so flags stay 0.
+        INSERT/REPLACE/UPDATE/DELETE ... RETURNING returns a result set to the
+        client, so it must be treated like a multi-result statement: permitted
+        inside a stored procedure, but rejected inside a stored function or
+        trigger by is_not_allowed_in_function() (ER_SP_NO_RETSET). A plain
+        data-change statement (no RETURNING) returns no result set, so flags
+        stay 0.
       */
       if (lex->m_sql_cmd != nullptr &&
           lex->m_sql_cmd->sql_cmd_type() == SQL_CMD_DML &&

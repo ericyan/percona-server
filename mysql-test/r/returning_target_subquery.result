@@ -1,0 +1,161 @@
+#
+# RETURNING clause: subqueries in the RETURNING list that reference the
+# SAME table being modified by the DML statement.
+#
+# BACKGROUND: In MariaDB this was a long tail of crashes (MDEV-25028,
+# MDEV-25187, MDEV-28740, MDEV-27165, MDEV-29686) eventually resolved by
+# MDEV-32086, which outright PROHIBITS a RETURNING subquery from
+# referencing the table being inserted into. This test observes how our
+# MySQL-8.4-based implementation behaves for the analogous cases.
+#
+# CONCLUSION: MySQL's pre-existing "You can't specify target table X for
+# update in FROM clause" protection (ER_UPDATE_TABLE_USED) already covers
+# RETURNING subqueries: INSERT ... VALUES, UPDATE and DELETE all reject a
+# RETURNING subquery that reads the table being modified, cleanly and
+# without any crash (stronger than MariaDB's original behavior). Only
+# INSERT ... SELECT permits it, which is safe (it just buffers the result,
+# exactly like the classic INSERT INTO t SELECT ... FROM t). No new
+# prohibition or hardening was required in our implementation.
+#
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+CREATE TABLE t2 (id INT PRIMARY KEY, a INT);
+#
+# 1. INSERT ... VALUES ... RETURNING with a scalar subquery reading the
+# SAME table being inserted into.
+# PREDICTION: errors with ER_UPDATE_TABLE_USED. Sql_cmd_insert_base::
+# prepare_inner() calls setup_returning_fields() (sql/sql_base.cc), which
+# resolves the subquery and links its Table_ref for t1 into the global
+# table list (table_list->next_global), BEFORE the existing
+# "unique_table(lex->insert_table_leaf, table_list->next_global, true)"
+# duplicate-table check for the non-SELECT INSERT path (sql/sql_insert.cc,
+# just after setup_returning_fields()). That check is unconditional (not
+# RETURNING-specific) and will find the RETURNING subquery's reference to
+# t1 as a duplicate of the insert target, raising
+# update_non_unique_table_error() -> ER_UPDATE_TABLE_USED.
+# OBSERVED: errors with ER_UPDATE_TABLE_USED (as predicted).
+INSERT INTO t1 VALUES (10, 100) RETURNING id, (SELECT COUNT(*) FROM t1) AS cnt;
+ERROR HY000: You can't specify target table 't1' for update in FROM clause
+DELETE FROM t1;
+#
+# 2. INSERT ... SELECT ... RETURNING with a subquery referencing the
+# insert target table.
+# PREDICTION: works (no error). For the select_insert branch,
+# Sql_cmd_insert_base::prepare_inner() (sql/sql_insert.cc) only uses
+# unique_table(lex->insert_table_leaf, table_list->next_global, false) to
+# decide whether to add OPTION_BUFFER_RESULT (buffer the SELECT before
+# writing) -- it does NOT call update_non_unique_table_error() in this
+# branch, unlike the VALUES branch above. A RETURNING subquery reference to
+# t1 simply contributes to that same "duplicate found" condition, so it is
+# expected to just force result buffering (same as the classic
+# "INSERT INTO t1 SELECT * FROM t1" case), not to error.
+INSERT INTO t1 VALUES (1, 1), (2, 2);
+INSERT INTO t2 SELECT id + 100, a FROM t1
+RETURNING id, (SELECT COUNT(*) FROM t2) AS cnt;
+id	cnt
+101	1
+102	1
+DELETE FROM t1;
+DELETE FROM t2;
+#
+# 3. UPDATE ... RETURNING with a NON-correlated scalar subquery reading
+# the SAME table being updated.
+# PREDICTION: works (no error), unlike DELETE/INSERT above. Sql_cmd_update
+# ::prepare_inner() (sql/sql_update.cc) also calls setup_returning_fields()
+# (before the duplicate-table check), but the UPDATE duplicate check
+# ("Check that tables being updated are not used in a subquery") only
+# calls unique_table(tr, select->leaf_tables, false) -- i.e. against the
+# OUTER UPDATE query block's own FROM-list, NOT the global table list.
+# A subquery is a separate nested Query_block whose own table reference
+# lives in ITS OWN leaf_tables, so it is invisible to this check. No
+# ER_UPDATE_TABLE_USED is expected to fire.
+# OBSERVED: the prediction was WRONG -- MySQL still rejects this with
+# ER_UPDATE_TABLE_USED. The subquery's reference to the update target is
+# caught by MySQL's general "can't specify target table for update in
+# FROM clause" protection (unique_table is also applied while resolving
+# subqueries against the modified table), so RETURNING inherits the same
+# safe rejection as a WHERE-clause self-reference. No crash, no stale rows.
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+UPDATE t1 SET a = a + 1 RETURNING id, (SELECT MAX(a) FROM t1) AS mx;
+ERROR HY000: You can't specify target table 't1' for update in FROM clause
+SELECT * FROM t1 ORDER BY id;
+id	a
+1	10
+2	20
+3	30
+DELETE FROM t1;
+#
+# 4. UPDATE ... RETURNING with a CORRELATED subquery reading the same
+# table (self-join style).
+# PREDICTION: same reasoning as case 3 (the leaf_tables-scoped duplicate
+# check in Sql_cmd_update::prepare_inner()/sql/sql_update.cc does not see
+# subquery tables), so no ER_UPDATE_TABLE_USED is expected here either.
+# Being correlated (re-evaluated per outer row, and it aliases the target
+# table as `x`), this case is the closest analogue to the MariaDB crash
+# reports -- watch for it also in case a crash occurs.
+# OBSERVED: also rejected with ER_UPDATE_TABLE_USED (no crash) -- same
+# protection as case 3.
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+UPDATE t1 SET a = a + 1
+RETURNING id, (SELECT COUNT(*) FROM t1 x WHERE x.a < t1.a) AS cnt_less;
+ERROR HY000: You can't specify target table 't1' for update in FROM clause
+SELECT * FROM t1 ORDER BY id;
+id	a
+1	10
+2	20
+3	30
+DELETE FROM t1;
+#
+# 5. DELETE ... RETURNING with a non-correlated scalar subquery reading
+# the SAME table being deleted from.
+# PREDICTION: errors with ER_UPDATE_TABLE_USED. Sql_cmd_delete::
+# prepare_inner() (sql/sql_delete.cc) calls setup_returning_fields() (which
+# resolves the subquery, linking its Table_ref for t1 into lex->
+# query_tables) BEFORE the "Check that tables being deleted from are not
+# used in a subquery" loop, which calls
+# unique_table(table_ref->updatable_base_table(), lex->query_tables,
+# false) -- against the FULL GLOBAL table list, unlike UPDATE. That check
+# is expected to find the RETURNING subquery's t1 reference as a
+# duplicate, raising ER_UPDATE_TABLE_USED via update_non_unique_table_error().
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+DELETE FROM t1 WHERE id = 1
+RETURNING id, (SELECT COUNT(*) FROM t1) AS remaining;
+ERROR HY000: You can't specify target table 't1' for update in FROM clause
+DELETE FROM t1;
+#
+# 6. DELETE ... RETURNING with a correlated subquery reading the same
+# table.
+# PREDICTION: same as case 5 -- DELETE's duplicate check is against the
+# global table list regardless of correlation, so ER_UPDATE_TABLE_USED is
+# expected here too (the subquery being correlated should not change
+# whether its Table_ref is present in lex->query_tables).
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+DELETE FROM t1 WHERE id = 1
+RETURNING id, (SELECT COUNT(*) FROM t1 x WHERE x.a < t1.a) AS cnt_less;
+ERROR HY000: You can't specify target table 't1' for update in FROM clause
+DELETE FROM t1;
+#
+# 7. For contrast: RETURNING subquery referencing a DIFFERENT table (t2)
+# works normally for all three statement types.
+INSERT INTO t1 VALUES (1, 10), (2, 20);
+INSERT INTO t2 VALUES (1, 100), (2, 200);
+INSERT INTO t1 VALUES (3, 30) RETURNING id, (SELECT COUNT(*) FROM t2) AS other_cnt;
+id	other_cnt
+3	2
+UPDATE t1 SET a = a + 1 RETURNING id, (SELECT COUNT(*) FROM t2) AS other_cnt;
+id	other_cnt
+1	2
+2	2
+3	2
+SELECT * FROM t1 ORDER BY id;
+id	a
+1	11
+2	21
+3	31
+DELETE FROM t1 WHERE id = 1 RETURNING id, (SELECT COUNT(*) FROM t2) AS other_cnt;
+id	other_cnt
+1	2
+SELECT * FROM t1 ORDER BY id;
+id	a
+2	21
+3	31
+DROP TABLE t1, t2;
