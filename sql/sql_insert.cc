@@ -465,6 +465,12 @@ bool Sql_cmd_insert_base::check_privileges(THD *thd) {
        sl = sl->next_query_block()) {
     if (sl->check_column_privileges(thd)) return true;
   }
+
+  // Re-check SELECT privilege on RETURNING columns on every execution so a
+  // REVOKE between PREPARE and EXECUTE is honoured.
+  if (has_returning() && check_returning_privileges(thd, *m_returning_fields))
+    return true;
+
   return false;
 }
 

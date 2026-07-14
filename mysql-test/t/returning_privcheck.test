@@ -1,0 +1,73 @@
+# RETURNING must enforce column-level SELECT privileges on the returned
+# expressions: on initial (non-prepared) execution, through updatable views,
+# and on re-execution of a prepared statement after a REVOKE. Review finding #1.
+
+CREATE DATABASE rpdb;
+USE rpdb;
+CREATE TABLE t1 (visible_col INT, secret_col INT DEFAULT 42);
+CREATE VIEW v1 AS SELECT visible_col, secret_col FROM t1;
+
+CREATE USER rpu@localhost;
+GRANT INSERT, UPDATE, DELETE ON rpdb.t1 TO rpu@localhost;
+GRANT SELECT (visible_col) ON rpdb.t1 TO rpu@localhost;
+GRANT INSERT, UPDATE, DELETE ON rpdb.v1 TO rpu@localhost;
+GRANT SELECT (visible_col) ON rpdb.v1 TO rpu@localhost;
+
+connect (u, localhost, rpu,,rpdb);
+
+--echo # ===== initial (non-prepared) execution: secret_col must be denied =====
+--error ER_COLUMNACCESS_DENIED_ERROR
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING secret_col;
+--error ER_COLUMNACCESS_DENIED_ERROR
+UPDATE t1 SET visible_col = 2 RETURNING secret_col;
+--error ER_COLUMNACCESS_DENIED_ERROR
+DELETE FROM t1 RETURNING secret_col;
+--echo # RETURNING * requires SELECT on the whole table and must be denied
+--error ER_TABLEACCESS_DENIED_ERROR
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING *;
+--echo # secret_col hidden inside an expression must be denied too
+--error ER_COLUMNACCESS_DENIED_ERROR
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING secret_col + 1;
+
+--echo # ===== through an updatable view =====
+--error ER_COLUMNACCESS_DENIED_ERROR
+INSERT INTO v1 (visible_col) VALUES (1) RETURNING secret_col;
+--error ER_COLUMNACCESS_DENIED_ERROR
+UPDATE v1 SET visible_col = 2 RETURNING secret_col;
+--error ER_COLUMNACCESS_DENIED_ERROR
+DELETE FROM v1 RETURNING secret_col;
+
+--echo # ===== authorized column still works =====
+INSERT INTO t1 (visible_col) VALUES (5) RETURNING visible_col;
+UPDATE t1 SET visible_col = 6 RETURNING visible_col;
+DELETE FROM t1 RETURNING visible_col;
+
+--echo # ===== PREPARE -> REVOKE -> EXECUTE must re-check on every execution =====
+connection default;
+GRANT SELECT (secret_col) ON rpdb.t1 TO rpu@localhost;
+connection u;
+PREPARE ins FROM 'INSERT INTO t1 (visible_col) VALUES (7) RETURNING secret_col';
+PREPARE upd FROM 'UPDATE t1 SET visible_col = 8 RETURNING secret_col';
+PREPARE del FROM 'DELETE FROM t1 RETURNING secret_col';
+--echo # first execute succeeds (privilege present)
+EXECUTE ins;
+EXECUTE upd;
+EXECUTE del;
+
+connection default;
+REVOKE SELECT (secret_col) ON rpdb.t1 FROM rpu@localhost;
+connection u;
+--echo # after REVOKE, re-execute must fail
+--error ER_COLUMNACCESS_DENIED_ERROR
+EXECUTE ins;
+--error ER_COLUMNACCESS_DENIED_ERROR
+EXECUTE upd;
+--error ER_COLUMNACCESS_DENIED_ERROR
+EXECUTE del;
+
+connection default;
+disconnect u;
+DROP USER rpu@localhost;
+DROP VIEW v1;
+DROP TABLE t1;
+DROP DATABASE rpdb;

@@ -189,6 +189,11 @@ bool Sql_cmd_delete::check_privileges(THD *thd) {
 
   if (lex->query_block->check_column_privileges(thd)) return true;
 
+  // Re-check SELECT privilege on RETURNING columns on every execution so a
+  // REVOKE between PREPARE and EXECUTE is honoured.
+  if (has_returning() && check_returning_privileges(thd, *m_returning_fields))
+    return true;
+
   return false;
 }
 

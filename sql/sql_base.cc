@@ -9794,7 +9794,38 @@ bool setup_returning_fields(THD *thd, Query_block *select,
                       Ref_item_array());
 
   thd->mark_used_columns = save_mark_used_columns;
+
+  // setup_fields() sets thd->want_privilege for the resolution pass, but for a
+  // DML target table (unlike a SELECT's FROM tables) the column-level SELECT
+  // check is not always performed while fixing the RETURNING items. Enforce it
+  // explicitly so a user cannot read a column through RETURNING that they lack
+  // SELECT privilege on. Re-execution of a prepared statement re-checks this in
+  // each statement's check_privileges().
+  if (!rc) rc = check_returning_privileges(thd, *fields);
+
   return rc;
+}
+
+/**
+  Check that the current user has SELECT privilege on every column referenced by
+  a RETURNING clause. Called both while resolving the clause (initial execution
+  and PREPARE) and from each DML statement's check_privileges() (re-execution of
+  a prepared statement), so a REVOKE between PREPARE and EXECUTE is honoured.
+
+  @param thd     Thread handler.
+  @param fields  The resolved RETURNING item list.
+
+  @return true if a required privilege is missing (error raised), false if OK.
+*/
+bool check_returning_privileges(THD *thd,
+                                const mem_root_deque<Item *> &fields) {
+  const Column_privilege_tracker column_privilege(thd, SELECT_ACL);
+  for (Item *item : fields) {
+    if (item->walk(&Item::check_column_privileges, enum_walk::PREFIX,
+                   pointer_cast<uchar *>(thd)))
+      return true;
+  }
+  return false;
 }
 
 /******************************************************************************
