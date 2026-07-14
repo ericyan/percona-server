@@ -70,3 +70,154 @@ REPLACE INTO t2 (id, x) SELECT 1, 999 RETURNING id, x;
 id	x
 1	999
 DROP TABLE src, t2;
+# RETURNING with generated columns (STORED and VIRTUAL)
+CREATE TABLE gc (
+id INT PRIMARY KEY AUTO_INCREMENT,
+a INT,
+b INT AS (a + 1) VIRTUAL,
+c INT AS (a * 2) STORED
+);
+# explicit generated columns
+INSERT INTO gc (a) VALUES (10) RETURNING id, a, b, c;
+id	a	b	c
+1	10	11	20
+# RETURNING * includes generated columns
+INSERT INTO gc (a) VALUES (20) RETURNING *;
+id	a	b	c
+2	20	21	40
+# expression over a generated column
+INSERT INTO gc (a) VALUES (30) RETURNING id, b + c AS sum_bc;
+id	sum_bc
+3	91
+# multi-row with generated columns
+INSERT INTO gc (a) VALUES (40), (50) RETURNING a, b, c;
+a	b	c
+40	41	80
+50	51	100
+DROP TABLE gc;
+# INSERT IGNORE: skipped (duplicate) rows are not returned
+CREATE TABLE ti (id INT PRIMARY KEY, a INT);
+INSERT INTO ti VALUES (1, 100);
+# id=1 is a duplicate and skipped; only id=2 is inserted and returned
+INSERT IGNORE INTO ti VALUES (1, 999), (2, 200) RETURNING id, a;
+id	a
+2	200
+Warnings:
+Warning	1062	Duplicate entry '1' for key 'ti.PRIMARY'
+# INSERT IGNORE ... SELECT: duplicate id=1 skipped, id=3 returned
+INSERT IGNORE INTO ti SELECT 1, 111 UNION SELECT 3, 300 RETURNING id, a;
+id	a
+3	300
+Warnings:
+Warning	1062	Duplicate entry '1' for key 'ti.PRIMARY'
+SELECT * FROM ti ORDER BY id;
+id	a
+1	100
+2	200
+3	300
+DROP TABLE ti;
+# ON DUPLICATE KEY UPDATE ... RETURNING (final row image)
+CREATE TABLE od (id INT PRIMARY KEY, a INT, cnt INT DEFAULT 0);
+INSERT INTO od (id, a) VALUES (1, 10);
+# no duplicate: a new row is inserted; RETURNING shows the inserted row
+INSERT INTO od (id, a) VALUES (2, 20)
+ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+id	a	cnt
+2	20	0
+# duplicate id=1: the existing row is updated; RETURNING shows the updated row
+INSERT INTO od (id, a) VALUES (1, 999)
+ON DUPLICATE KEY UPDATE a = a + 100, cnt = cnt + 1 RETURNING id, a, cnt;
+id	a	cnt
+1	110	1
+# RETURNING * with ON DUPLICATE KEY UPDATE
+INSERT INTO od (id, a) VALUES (1, 999)
+ON DUPLICATE KEY UPDATE a = a + 1, cnt = cnt + 1 RETURNING *;
+id	a	cnt
+1	111	2
+SELECT * FROM od ORDER BY id;
+id	a	cnt
+1	111	2
+2	20	0
+DROP TABLE od;
+# PREPARE / EXECUTE of INSERT ... RETURNING
+CREATE TABLE tp (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+PREPARE s FROM 'INSERT INTO tp (a) VALUES (?) RETURNING id, a';
+SET @v = 10;
+EXECUTE s USING @v;
+id	a
+1	10
+SET @v = 20;
+EXECUTE s USING @v;
+id	a
+2	20
+DEALLOCATE PREPARE s;
+# prepared RETURNING *
+PREPARE s2 FROM 'INSERT INTO tp (a) VALUES (?) RETURNING *';
+SET @v = 30;
+EXECUTE s2 USING @v;
+id	a
+3	30
+DEALLOCATE PREPARE s2;
+# prepared multi-row INSERT ... RETURNING
+PREPARE s3 FROM 'INSERT INTO tp (a) VALUES (?), (?) RETURNING id, a';
+SET @v1 = 40;
+SET @v2 = 50;
+EXECUTE s3 USING @v1, @v2;
+id	a
+4	40
+5	50
+DEALLOCATE PREPARE s3;
+SELECT * FROM tp ORDER BY id;
+id	a
+1	10
+2	20
+3	30
+4	40
+5	50
+DROP TABLE tp;
+# subqueries inside the RETURNING list
+CREATE TABLE lookup (k INT, v VARCHAR(10));
+INSERT INTO lookup VALUES (1, 'one'), (2, 'two'), (3, 'three');
+CREATE TABLE ts (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+# non-correlated scalar subquery
+INSERT INTO ts (a) VALUES (1)
+RETURNING id, a, (SELECT COUNT(*) FROM lookup) AS lookup_count;
+id	a	lookup_count
+1	1	3
+# correlated scalar subquery referencing the inserted row's column a
+INSERT INTO ts (a) VALUES (2)
+RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
+id	a	a_name
+2	2	two
+# correlated subquery for a non-matching value returns NULL
+INSERT INTO ts (a) VALUES (99)
+RETURNING id, a, (SELECT v FROM lookup WHERE k = a) AS a_name;
+id	a	a_name
+3	99	NULL
+DROP TABLE ts, lookup;
+# ROW_COUNT() and LAST_INSERT_ID() with RETURNING
+CREATE TABLE tc (id INT PRIMARY KEY AUTO_INCREMENT, a INT);
+# multi-row INSERT ... RETURNING, then capture ROW_COUNT()/LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (10), (20), (30) RETURNING id, a;
+id	a
+1	10
+2	20
+3	30
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_after_returning, @lid AS last_insert_id_after_returning;
+row_count_after_returning	last_insert_id_after_returning
+-1	1
+# same insert shape WITHOUT returning, for comparison
+INSERT INTO tc (a) VALUES (40), (50), (60);
+SET @rc = ROW_COUNT(), @lid = LAST_INSERT_ID();
+SELECT @rc AS row_count_plain, @lid AS last_insert_id_plain;
+row_count_plain	last_insert_id_plain
+3	4
+# single-row INSERT ... RETURNING then LAST_INSERT_ID()
+INSERT INTO tc (a) VALUES (70) RETURNING id;
+id
+7
+SELECT LAST_INSERT_ID() AS last_insert_id_single;
+last_insert_id_single
+7
+DROP TABLE tc;

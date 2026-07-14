@@ -661,6 +661,10 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
         // continue when IGNORE clause is used.
         continue;
       }
+      const ha_rows returning_copied = info.stats.copied;
+      const ha_rows returning_deleted = info.stats.deleted;
+      const ha_rows returning_updated = info.stats.updated;
+      const ha_rows returning_touched = info.stats.touched;
       int error = insert_table->file->ha_upsert(thd, update_field_list,
                                                 update_value_list);
       if (error == ENOTSUP)
@@ -669,7 +673,19 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
         has_error = true;
         break;
       }
-      if (has_returning() &&
+      // A row is produced for RETURNING when write_record() inserted a row
+      // (copied), replaced one (deleted), or matched a duplicate via ON
+      // DUPLICATE KEY UPDATE. The latter increments 'touched' even when the
+      // update is a no-op (e.g. "a = a"), while 'updated' only counts rows
+      // whose values actually changed; check 'touched' too so a matched no-op
+      // ODKU row is still returned. Rows skipped by IGNORE or a view check
+      // option change none of these counters and are correctly omitted.
+      const bool returning_row_produced =
+          info.stats.copied != returning_copied ||
+          info.stats.deleted != returning_deleted ||
+          info.stats.updated != returning_updated ||
+          info.stats.touched != returning_touched;
+      if (returning_row_produced && has_returning() &&
           returning_sender.send_row(thd, *m_returning_fields)) {
         has_error = true;
         break;
@@ -2379,11 +2395,23 @@ bool Query_result_insert::send_data(THD *thd,
     return thd->is_error();
   }
 
+  const ha_rows returning_copied = info.stats.copied;
+  const ha_rows returning_deleted = info.stats.deleted;
+  const ha_rows returning_updated = info.stats.updated;
+  const ha_rows returning_touched = info.stats.touched;
   error = write_record(thd, table, &info, &update);
 
   DEBUG_SYNC(thd, "create_select_after_write_rows_event");
 
-  if (!error && has_returning() &&
+  // See the VALUES path in Sql_cmd_insert_values::execute_inner(): 'touched'
+  // is checked so a matched no-op ON DUPLICATE KEY UPDATE row is still
+  // returned, while rows skipped by IGNORE / view check option are omitted.
+  const bool returning_row_produced =
+      info.stats.copied != returning_copied ||
+      info.stats.deleted != returning_deleted ||
+      info.stats.updated != returning_updated ||
+      info.stats.touched != returning_touched;
+  if (!error && returning_row_produced && has_returning() &&
       m_returning_sender.send_row(thd, *m_returning_fields))
     error = true;
 

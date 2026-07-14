@@ -1,0 +1,33 @@
+CREATE TABLE t1 (id INT PRIMARY KEY, a INT);
+INSERT INTO t1 VALUES (1, 10);
+# ===== VALUES form: no-op ODKU (a = a) must still return the row =====
+INSERT INTO t1 VALUES (1, 999) ON DUPLICATE KEY UPDATE a = a RETURNING id, a;
+id	a
+1	10
+# ===== VALUES form: changing ODKU returns the post-update row =====
+INSERT INTO t1 VALUES (1, 999) ON DUPLICATE KEY UPDATE a = 20 RETURNING id, a;
+id	a
+1	20
+# ===== VALUES form: fresh insert (no duplicate) returns the new row =====
+INSERT INTO t1 VALUES (2, 30) ON DUPLICATE KEY UPDATE a = a RETURNING id, a;
+id	a
+2	30
+# ===== SELECT form: no-op ODKU must still return the row =====
+CREATE TABLE src (id INT, a INT);
+INSERT INTO src VALUES (1, 777);
+INSERT INTO t1 SELECT id, a FROM src ON DUPLICATE KEY UPDATE a = t1.a
+RETURNING id, a;
+id	a
+1	20
+# ===== SELECT form: changing ODKU returns the post-update row =====
+UPDATE src SET a = 888;
+INSERT INTO t1 SELECT id, a FROM src ON DUPLICATE KEY UPDATE a = 40
+RETURNING id, a;
+id	a
+1	40
+# ===== INSERT IGNORE duplicate (genuinely skipped) returns no row =====
+INSERT IGNORE INTO t1 VALUES (1, 555) RETURNING id, a;
+id	a
+Warnings:
+Warning	1062	Duplicate entry '1' for key 't1.PRIMARY'
+DROP TABLE t1, src;
