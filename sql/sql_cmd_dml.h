@@ -30,7 +30,10 @@
 #include "sql/sql_prepare.h"
 
 struct LEX;
+class Item;
 class Query_result;
+template <class T>
+class mem_root_deque;
 
 class Sql_cmd_dml : public Sql_cmd {
  public:
@@ -99,6 +102,9 @@ class Sql_cmd_dml : public Sql_cmd {
 
   /// Signal that root result object needs preparing in next execution
   void set_lazy_result() { m_lazy_result = true; }
+
+  /// @return true if the statement carries a RETURNING clause
+  bool has_returning() const { return m_returning_fields != nullptr; }
 
  protected:
   Sql_cmd_dml()
@@ -220,6 +226,13 @@ class Sql_cmd_dml : public Sql_cmd {
   Query_result *result;  ///< Pointer to object for handling of the result
   bool m_empty_query;    ///< True if query will produce no rows
   bool m_lazy_result;    ///< True: prepare query result on next execution
+
+  /**
+    The RETURNING clause select expressions, or nullptr if the statement has
+    no RETURNING clause. Populated by the parse-tree node and resolved in
+    prepare_inner(); kept separate from Query_block::fields.
+  */
+  mem_root_deque<Item *> *m_returning_fields{nullptr};
 };
 
 #endif /* SQL_CMD_DML_INCLUDED */
