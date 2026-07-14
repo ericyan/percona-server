@@ -106,6 +106,11 @@ class Sql_cmd_dml : public Sql_cmd {
   /// @return true if the statement carries a RETURNING clause
   bool has_returning() const { return m_returning_fields != nullptr; }
 
+  /// @return the resolved RETURNING clause item list, or nullptr if none.
+  const mem_root_deque<Item *> *returning_fields() const {
+    return m_returning_fields;
+  }
+
   /// Set the RETURNING clause fields (storage owned by the parse tree)
   void set_returning_fields(mem_root_deque<Item *> *fields) {
     m_returning_fields = fields;

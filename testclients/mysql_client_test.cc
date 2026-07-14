@@ -23826,9 +23826,77 @@ static void test_bug36686351() {
   mysql_stmt_close(stmt);
 }
 
+/*
+  INSERT/UPDATE/DELETE ... RETURNING produce a result set at execution but do
+  not carry the static CF_HAS_RESULT_SET command flag. Verify that
+  COM_STMT_PREPARE advertises the RETURNING columns (prepare-time field count
+  and metadata) and that they match the execute-time result set, while plain
+  DML without RETURNING continues to advertise zero columns.
+*/
+static void test_returning_metadata() {
+  MYSQL_STMT *stmt;
+  MYSQL_RES *prep_res;
+  MYSQL_FIELD *fields;
+  int rc;
+  size_t i;
+  const char *const returning_stmts[] = {
+      "INSERT INTO t_returning (a) VALUES (100) RETURNING id, a",
+      "UPDATE t_returning SET a = a + 1 RETURNING id, a",
+      "DELETE FROM t_returning RETURNING id, a"};
+
+  myheader("test_returning_metadata");
+
+  rc = mysql_query(mysql, "DROP TABLE IF EXISTS t_returning");
+  myquery(rc);
+  rc = mysql_query(mysql,
+                   "CREATE TABLE t_returning "
+                   "(id INT PRIMARY KEY AUTO_INCREMENT, a INT)");
+  myquery(rc);
+
+  for (i = 0; i < sizeof(returning_stmts) / sizeof(returning_stmts[0]); i++) {
+    stmt = mysql_simple_prepare(mysql, returning_stmts[i]);
+    check_stmt(stmt);
+
+    /* COM_STMT_PREPARE must advertise the two RETURNING columns. */
+    DIE_UNLESS(mysql_stmt_field_count(stmt) == 2);
+
+    prep_res = mysql_stmt_result_metadata(stmt);
+    mytest(prep_res);
+    DIE_UNLESS(mysql_num_fields(prep_res) == 2);
+    fields = mysql_fetch_fields(prep_res);
+    DIE_UNLESS(strcmp(fields[0].name, "id") == 0);
+    DIE_UNLESS(strcmp(fields[1].name, "a") == 0);
+    mysql_free_result(prep_res);
+
+    rc = mysql_stmt_execute(stmt);
+    check_execute(stmt, rc);
+
+    /* Execute-time field count must match the prepare-time metadata. */
+    DIE_UNLESS(mysql_stmt_field_count(stmt) == 2);
+
+    /* Drain any streamed rows so the connection is clean for the next stmt. */
+    while (mysql_stmt_fetch(stmt) == 0) {
+    }
+
+    mysql_stmt_close(stmt);
+  }
+
+  /* Plain DML without RETURNING must still advertise zero columns. */
+  stmt = mysql_simple_prepare(mysql, "INSERT INTO t_returning (a) VALUES (9)");
+  check_stmt(stmt);
+  DIE_UNLESS(mysql_stmt_field_count(stmt) == 0);
+  prep_res = mysql_stmt_result_metadata(stmt);
+  DIE_UNLESS(prep_res == nullptr);
+  mysql_stmt_close(stmt);
+
+  rc = mysql_query(mysql, "DROP TABLE t_returning");
+  myquery(rc);
+}
+
 static struct my_tests_st my_tests[] = {
     {"disable_query_logs", disable_query_logs},
     {"client_query", client_query},
+    {"test_returning_metadata", test_returning_metadata},
     {"test_prepare_insert_update", test_prepare_insert_update},
     {"test_fetch_seek", test_fetch_seek},
     {"test_fetch_nobuffs", test_fetch_nobuffs},
