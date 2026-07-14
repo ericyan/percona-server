@@ -968,6 +968,17 @@ bool Sql_cmd_delete::execute_inner(THD *thd) {
       return explain_single_table_modification(thd, thd, &plan,
                                                lex->query_block);
     }
+    if (has_returning()) {
+      // Partition pruning during optimization made the query empty. A
+      // RETURNING statement must still produce a result set (column metadata
+      // + EOF, zero rows) rather than an OK packet, so its wire shape does not
+      // depend on the optimizer.
+      Returning_sender returning_sender;
+      if (returning_sender.begin(thd, *m_returning_fields) ||
+          returning_sender.end(thd))
+        return true;
+      return false;
+    }
     my_ok(thd);
     return false;
   }

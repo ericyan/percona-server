@@ -1,0 +1,28 @@
+# Partition-pruned UPDATE/DELETE ... RETURNING must return an (empty) result
+# set -- column metadata + zero rows -- not an OK packet. The wire shape must
+# not depend on whether the optimizer pruned all partitions vs. a runtime-empty
+# predicate. Review finding #3.
+
+CREATE TABLE pt (id INT, val INT)
+  PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20)
+  );
+INSERT INTO pt VALUES (1, 1), (11, 11);
+
+--echo # ===== all partitions pruned at optimize time (id >= 100) =====
+--echo # Each of these must print a result-set header (id, val) with zero rows.
+UPDATE pt SET val = val + 1 WHERE id >= 100 RETURNING id, val;
+DELETE FROM pt WHERE id >= 100 RETURNING id, val;
+
+--echo # ===== runtime-empty predicate (WHERE 1=0) for comparison =====
+UPDATE pt SET val = val + 1 WHERE 1 = 0 RETURNING id, val;
+DELETE FROM pt WHERE 1 = 0 RETURNING id, val;
+
+--echo # ===== sanity: matching rows still stream =====
+--sorted_result
+UPDATE pt SET val = val + 100 WHERE id < 100 RETURNING id, val;
+--sorted_result
+DELETE FROM pt WHERE id < 100 RETURNING id, val;
+
+DROP TABLE pt;

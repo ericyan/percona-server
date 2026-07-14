@@ -496,7 +496,15 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
             explain_single_table_modification(thd, thd, &plan, query_block);
         return err;
       }
-      my_ok(thd);
+      if (has_returning()) {
+        // All partitions pruned: still return an empty RETURNING result set
+        // (column metadata + EOF, zero rows) rather than an OK packet.
+        if (returning_sender.begin(thd, *m_returning_fields) ||
+            returning_sender.end(thd))
+          return true;
+      } else {
+        my_ok(thd);
+      }
       return false;
     }
   }
@@ -1896,6 +1904,17 @@ bool Sql_cmd_update::execute_inner(THD *thd) {
                              0);
       return explain_single_table_modification(thd, thd, &plan,
                                                lex->query_block);
+    }
+    if (has_returning()) {
+      // Partition pruning during optimization made the query empty. A
+      // RETURNING statement must still produce a result set (column metadata
+      // + EOF, zero rows) rather than an OK packet, so its wire shape does not
+      // depend on the optimizer.
+      Returning_sender returning_sender;
+      if (returning_sender.begin(thd, *m_returning_fields) ||
+          returning_sender.end(thd))
+        return true;
+      return false;
     }
     my_ok(thd);
     return false;

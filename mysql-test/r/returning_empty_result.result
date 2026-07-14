@@ -1,0 +1,27 @@
+CREATE TABLE pt (id INT, val INT)
+PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20)
+);
+INSERT INTO pt VALUES (1, 1), (11, 11);
+# ===== all partitions pruned at optimize time (id >= 100) =====
+# Each of these must print a result-set header (id, val) with zero rows.
+UPDATE pt SET val = val + 1 WHERE id >= 100 RETURNING id, val;
+id	val
+DELETE FROM pt WHERE id >= 100 RETURNING id, val;
+id	val
+# ===== runtime-empty predicate (WHERE 1=0) for comparison =====
+UPDATE pt SET val = val + 1 WHERE 1 = 0 RETURNING id, val;
+id	val
+DELETE FROM pt WHERE 1 = 0 RETURNING id, val;
+id	val
+# ===== sanity: matching rows still stream =====
+UPDATE pt SET val = val + 100 WHERE id < 100 RETURNING id, val;
+id	val
+1	101
+11	111
+DELETE FROM pt WHERE id < 100 RETURNING id, val;
+id	val
+1	101
+11	111
+DROP TABLE pt;
