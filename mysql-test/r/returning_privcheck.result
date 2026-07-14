@@ -1,0 +1,66 @@
+CREATE DATABASE rpdb;
+USE rpdb;
+CREATE TABLE t1 (visible_col INT, secret_col INT DEFAULT 42);
+CREATE VIEW v1 AS SELECT visible_col, secret_col FROM t1;
+CREATE USER rpu@localhost;
+GRANT INSERT, UPDATE, DELETE ON rpdb.t1 TO rpu@localhost;
+GRANT SELECT (visible_col) ON rpdb.t1 TO rpu@localhost;
+GRANT INSERT, UPDATE, DELETE ON rpdb.v1 TO rpu@localhost;
+GRANT SELECT (visible_col) ON rpdb.v1 TO rpu@localhost;
+# ===== initial (non-prepared) execution: secret_col must be denied =====
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+UPDATE t1 SET visible_col = 2 RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+DELETE FROM t1 RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+# RETURNING * requires SELECT on the whole table and must be denied
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING *;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for table 't1'
+# secret_col hidden inside an expression must be denied too
+INSERT INTO t1 (visible_col) VALUES (1) RETURNING secret_col + 1;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+# ===== through an updatable view =====
+INSERT INTO v1 (visible_col) VALUES (1) RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 'v1'
+UPDATE v1 SET visible_col = 2 RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 'v1'
+DELETE FROM v1 RETURNING secret_col;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 'v1'
+# ===== authorized column still works =====
+INSERT INTO t1 (visible_col) VALUES (5) RETURNING visible_col;
+visible_col
+5
+UPDATE t1 SET visible_col = 6 RETURNING visible_col;
+visible_col
+6
+DELETE FROM t1 RETURNING visible_col;
+visible_col
+6
+# ===== PREPARE -> REVOKE -> EXECUTE must re-check on every execution =====
+GRANT SELECT (secret_col) ON rpdb.t1 TO rpu@localhost;
+PREPARE ins FROM 'INSERT INTO t1 (visible_col) VALUES (7) RETURNING secret_col';
+PREPARE upd FROM 'UPDATE t1 SET visible_col = 8 RETURNING secret_col';
+PREPARE del FROM 'DELETE FROM t1 RETURNING secret_col';
+# first execute succeeds (privilege present)
+EXECUTE ins;
+secret_col
+42
+EXECUTE upd;
+secret_col
+42
+EXECUTE del;
+secret_col
+42
+REVOKE SELECT (secret_col) ON rpdb.t1 FROM rpu@localhost;
+# after REVOKE, re-execute must fail
+EXECUTE ins;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+EXECUTE upd;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+EXECUTE del;
+ERROR 42000: SELECT command denied to user 'rpu'@'localhost' for column 'secret_col' in table 't1'
+DROP USER rpu@localhost;
+DROP VIEW v1;
+DROP TABLE t1;
+DROP DATABASE rpdb;

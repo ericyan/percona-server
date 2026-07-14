@@ -228,6 +228,11 @@ bool Sql_cmd_update::check_privileges(THD *thd) {
   thd->want_privilege = SELECT_ACL;
   if (select->check_privileges_for_subqueries(thd)) return true;
 
+  // Re-check SELECT privilege on RETURNING columns on every execution so a
+  // REVOKE between PREPARE and EXECUTE is honoured.
+  if (has_returning() && check_returning_privileges(thd, *m_returning_fields))
+    return true;
+
   return false;
 }
 
